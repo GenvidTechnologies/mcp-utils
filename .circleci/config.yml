@@ -23,8 +23,9 @@ jobs:
       - image: cimg/node:22.13
     steps:
       - checkout
-      - node/install-packages:
-          pkg-manager: pnpm
+      - run:
+          name: Install dependencies
+          command: pnpm install --no-frozen-lockfile
       - run:
           name: Lint
           command: pnpm run lint
