@@ -84,25 +84,37 @@ jobs:
       - run:
           name: Upload to Azure Blob Storage
           command: |
-            VERSION=$(node -p "require('./package.json').version")
+            TAG=<< pipeline.git.tag >>
+            BRANCH=<< pipeline.git.branch >>
+            if [ -z "${TAG}" ]; then
+              export SLUG=branch/${BRANCH}
+            else
+              export SLUG=tags/${TAG}
+            fi
+
             NAME=$(node -p "require('./package.json').name")
-            az storage blob upload \
-              --overwrite \
-              -c cordova \
-              -n "$NAME/tags/$VERSION/$NAME-$VERSION.tgz" \
-              --file "$NAME-$VERSION.tgz"
+            for file in *.tgz ; do
+              az storage blob upload \
+                --overwrite \
+                -c cordova \
+                -n "$NAME/${SLUG}/$(basename ${file})" \
+                --file "${file}"
+            done
 
 workflows:
   build-test-publish:
     jobs:
       - build-and-test:
+          filters:
+            tags:
+              only: /\d+\..*/
           context:
             - burbank-onepassword
       - publish:
+          filters:
+            tags:
+              only: /\d+\..*/
           context:
             - burbank-onepassword
           requires:
             - build-and-test
-          filters:
-            branches:
-              only: main
