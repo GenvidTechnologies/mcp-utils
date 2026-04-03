@@ -1,0 +1,77 @@
+version: 2.1
+
+orbs:
+  azure-cli: circleci/azure-cli@1.2.2
+  node: circleci/node@6.3.0
+
+commands:
+  az-login-with-sp:
+    description: Login to Azure with service principal
+    steps:
+      - run:
+          name: Login to Azure
+          command: |
+            az login \
+              --service-principal \
+              --username=$AZURE_SP_APPID \
+              --tenant=$AZURE_SP_TENANT \
+              --password=$AZURE_SP_PASSWORD
+
+jobs:
+  build-and-test:
+    docker:
+      - image: cimg/node:22.13
+    steps:
+      - checkout
+      - node/install-packages:
+          pkg-manager: pnpm
+      - run:
+          name: Lint
+          command: pnpm run lint
+      - run:
+          name: Typecheck
+          command: pnpm run typecheck
+      - run:
+          name: Test
+          command: pnpm run test
+      - run:
+          name: Build
+          command: pnpm run build
+      - run:
+          name: Pack
+          command: pnpm pack
+      - persist_to_workspace:
+          root: .
+          paths:
+            - "*.tgz"
+
+  publish:
+    docker:
+      - image: cimg/node:22.13
+    steps:
+      - checkout
+      - attach_workspace:
+          at: .
+      - azure-cli/install
+      - az-login-with-sp
+      - run:
+          name: Upload to Azure Blob Storage
+          command: |
+            VERSION=$(node -p "require('./package.json').version")
+            NAME=$(node -p "require('./package.json').name")
+            az storage blob upload \
+              --overwrite \
+              -c cordova \
+              -n "$NAME/tags/$VERSION/$NAME-$VERSION.tgz" \
+              --file "$NAME-$VERSION.tgz"
+
+workflows:
+  build-test-publish:
+    jobs:
+      - build-and-test
+      - publish:
+          requires:
+            - build-and-test
+          filters:
+            branches:
+              only: main
