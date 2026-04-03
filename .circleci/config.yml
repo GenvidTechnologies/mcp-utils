@@ -60,6 +60,11 @@ jobs:
       - run:
           name: Pack
           command: pnpm pack
+      - run:
+          name: Move artifact
+          command: mkdir -p /tmp/artifacts && cp *.tgz /tmp/artifacts/
+      - store_artifacts:
+          path: /tmp/artifacts
       - persist_to_workspace:
           root: .
           paths:
