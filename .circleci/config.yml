@@ -13,9 +13,9 @@ commands:
           command: |
             az login \
               --service-principal \
-              --username=$AZURE_SP_APPID \
-              --tenant=$AZURE_SP_TENANT \
-              --password=$AZURE_SP_PASSWORD
+              --username=${AZURE_SP_APPID} \
+              --tenant=${AZURE_SP_TENANT} \
+              --password=${AZURE_SP_PASSWORD}
 
 jobs:
   build-and-test:
