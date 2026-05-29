@@ -1,0 +1,19 @@
+{
+  "project": {
+    "name": "genvid-mcp-utils",
+    "description": "Dependency-light TypeScript utilities for building MCP servers in the Genvid monorepo.",
+    "languages": ["typescript"]
+  },
+  "commands": {
+    "test": "pnpm run test",
+    "lint": "pnpm run lint",
+    "build": "pnpm run build",
+    "validate": "pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build"
+  },
+  "repo": {
+    "host": "github",
+    "default_branch": "main"
+  },
+  "features": {},
+  "paths": {}
+}
