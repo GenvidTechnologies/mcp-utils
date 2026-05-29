@@ -10,3 +10,5 @@ export { bufferingLogger } from "./bufferingLogger.js";
 export { mcpError, withMcpErrors } from "./mcpError.js";
 export { paginatedContent } from "./mcpContent.js";
 export { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "./toolAnnotations.js";
+export { OptimisticWatcher } from "./optimisticWatcher.js";
+export type { OptimisticWatcherOptions, WatcherFactory, WatchHandle } from "./optimisticWatcher.js";
