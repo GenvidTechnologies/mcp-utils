@@ -1,3 +1,5 @@
+import { toPosixPath } from "./strings.js";
+
 /**
  * Tracks file paths that MCP write tools are about to modify, so the
  * file watcher can suppress the self-triggered change event.
@@ -14,7 +16,7 @@ export class ExpectedChanges {
   }
 
   private static normalize(p: string): string {
-    return p.replace(/\\/g, "/");
+    return toPosixPath(p);
   }
 
   /** Register a path before writing. */
