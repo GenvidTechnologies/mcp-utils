@@ -8,3 +8,4 @@ export { walkFiles } from "./walkFiles.js";
 export { resolveWithin } from "./resolveWithin.js";
 export { bufferingLogger } from "./bufferingLogger.js";
 export { mcpError, withMcpErrors } from "./mcpError.js";
+export { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "./toolAnnotations.js";
