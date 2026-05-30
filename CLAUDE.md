@@ -34,6 +34,7 @@ CI (CircleCI, `.circleci/config.yml`) runs lint → typecheck → test → build
 - **Tests run on TypeScript directly** via `tsx` (`--import=tsx`), no pre-compilation. `test/setup.ts` is a Mocha root hook that silences `console.log`/`console.debug` per test (warn/error stay live) — diagnostic logging in utilities is expected and won't pollute test output.
 - **Two tsconfigs:** `tsconfig.json` (build, `composite`, emits `src` → `dist`) and `tsconfig.test.json` (extends it, `noEmit`, includes `test/` too — this is what `typecheck` uses).
 - Formatting/linting: Prettier + ESLint (`eslint:recommended` + `@typescript-eslint/recommended` + `prettier`). The unused-vars and `no-explicit-any` rules are intentionally disabled.
+- **Testing error paths under ESM:** you cannot monkey-patch `node:*` namespace members (e.g. `(fs as any).readdirSync = …`) — ESM namespace objects are sealed/read-only in Node 22+. To make a built-in I/O call substitutable for a test (e.g. to simulate `EACCES`), accept the dependency as an optional parameter defaulting to the real implementation and have tests pass a stub. See `src/walkFiles.ts` (the `readdir` parameter defaulting to `fs.readdirSync`) — this keeps the seam in the function signature rather than a shared mutable export, so there is no public-API leak and no cross-test shared state.
 
 ## Utilities (`src/`)
 
