@@ -1,10 +1,12 @@
-# genvid-mcp-utils
+# @genvid/mcp-utils
 
 Shared utilities for building MCP servers: concurrency control, file-change tracking, text pagination, path and filesystem helpers, MCP response and error helpers, tool annotations, and optimistic file watching.
 
 ## Installation
 
-This is a private package consumed within the monorepo. Import directly:
+```sh
+npm install @genvid/mcp-utils
+```
 
 ```ts
 import {
@@ -13,7 +15,7 @@ import {
   mcpError, withMcpErrors, bufferingLogger, paginatedContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
   OptimisticWatcher,
-} from "genvid-mcp-utils";
+} from "@genvid/mcp-utils";
 ```
 
 ## Utilities
@@ -65,7 +67,7 @@ handleExternalChange(changedPath);
 Paginates large text content by line using a 1-based `offset` and `limit`. A trailing newline does not count as an extra line.
 
 ```ts
-import { paginateText } from "genvid-mcp-utils";
+import { paginateText } from "@genvid/mcp-utils";
 
 const result = paginateText("a\nb\nc\n", { offset: 2, limit: 1 });
 // {
@@ -100,7 +102,7 @@ const result = paginateText("a\nb\nc\n", { offset: 2, limit: 1 });
 A minimal logger interface used by MCP server utilities:
 
 ```ts
-import type { Logger } from "genvid-mcp-utils";
+import type { Logger } from "@genvid/mcp-utils";
 
 function setup(log: Logger) {
   log("server started");
@@ -112,7 +114,7 @@ function setup(log: Logger) {
 Recursively walks a directory and returns the absolute paths of all files whose path satisfies `match`. If the directory does not exist the function returns `[]` without throwing; other I/O errors (e.g. `EACCES`) are re-thrown. Symlinked directories are not followed — only entries for which `entry.isDirectory()` returns `true` are recursed into.
 
 ```ts
-import { walkFiles } from "genvid-mcp-utils";
+import { walkFiles } from "@genvid/mcp-utils";
 
 // String match: suffix / endsWith test
 const jsonFiles = walkFiles("/project/data", ".json");
@@ -130,7 +132,7 @@ Two lightweight string helpers.
 `toPosixPath` converts all backslashes to forward slashes, producing a POSIX-style path. No-ops on paths that already use forward slashes.
 
 ```ts
-import { escapeRegExp, toPosixPath } from "genvid-mcp-utils";
+import { escapeRegExp, toPosixPath } from "@genvid/mcp-utils";
 
 const pattern = new RegExp(escapeRegExp("file.name[0]")); // literal match
 
@@ -148,7 +150,7 @@ Resolves `rel` against `base` and returns the absolute path only if it stays wit
 > **Lexical only.** This does no filesystem access and does **not** resolve symlinks — a symlink inside `base` pointing outside it will be accepted. For an on-disk containment guarantee (sandboxing attacker-supplied paths against symlink escapes), `fs.realpath` the result and re-check.
 
 ```ts
-import { resolveWithin } from "genvid-mcp-utils";
+import { resolveWithin } from "@genvid/mcp-utils";
 
 resolveWithin("/project", "src/index.ts"); // "/project/src/index.ts"
 resolveWithin("/project", "../secret");    // null  — escapes base
@@ -164,7 +166,7 @@ Helpers that turn thrown errors into `CallToolResult` responses with `isError: t
 `withMcpErrors(fn, extraLines?)` wraps an async handler so any thrown error is caught and returned as `mcpError(...)`. The `extraLines` argument here is a **thunk** `() => string[]` that is called only at catch time — useful for reading mutable state (e.g. a log buffer or transaction counter) that may have changed between the call and the throw.
 
 ```ts
-import { mcpError, withMcpErrors, bufferingLogger } from "genvid-mcp-utils";
+import { mcpError, withMcpErrors, bufferingLogger } from "@genvid/mcp-utils";
 
 // Direct conversion of a caught error
 try {
@@ -190,7 +192,7 @@ const handler = withMcpErrors(
 Creates a logger that captures all log calls in memory instead of writing to stdout. Returns `{ log, text }` where `log` is a `Logger` that buffers each call as a line (multiple arguments joined by a single space via `String()` coercion), and `text()` returns the accumulated lines joined by `"\n"`.
 
 ```ts
-import { bufferingLogger } from "genvid-mcp-utils";
+import { bufferingLogger } from "@genvid/mcp-utils";
 
 const { log, text } = bufferingLogger();
 log("processed", 3, "files");
@@ -203,7 +205,7 @@ text(); // "processed 3 files\ndone"
 Wraps `paginateText` and returns a `CallToolResult` whose single text block combines the page text and a `lines: A-B / total` range footer, joined with a blank line (`"\n\n"`). The range footer is emitted **only when `offset` or `limit` was supplied** (matching the consumer's `paginatedResponse`); an un-paginated call returns the whole text with no footer. An out-of-range page reports `lines: 0 / total` (no misleading range, no leading blank lines). An optional `footer(r)` callback receives the full `PaginatedResult` and its return value is appended on a new line; the callback always runs.
 
 ```ts
-import { paginatedContent } from "genvid-mcp-utils";
+import { paginatedContent } from "@genvid/mcp-utils";
 
 const result = paginatedContent("a\nb\nc\n", { offset: 1, limit: 2 });
 // result.content[0].text === "a\nb\n\nlines: 1-2 / 3"
@@ -230,7 +232,7 @@ const withFooter = paginatedContent(
 Four `ToolAnnotations` constants for use when registering MCP tools. Each preset sets `readOnlyHint`, `destructiveHint`, and `idempotentHint` to reflect the tool's expected behavior.
 
 ```ts
-import { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "genvid-mcp-utils";
+import { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "@genvid/mcp-utils";
 
 server.tool("list-files", schema, READ_ONLY, handler);
 server.tool("write-config", schema, REGENERATE, handler);
@@ -259,7 +261,7 @@ Watches one or more directories and classifies incoming change events as either 
 `suppress` does not call `bump()` automatically. If a write is cancelled before it reaches the filesystem, no watcher event will fire and `txId` will not advance. Call `bump()` explicitly so downstream consumers are still notified that state may have changed:
 
 ```ts
-import { OptimisticWatcher, ExpectedChanges } from "genvid-mcp-utils";
+import { OptimisticWatcher, ExpectedChanges } from "@genvid/mcp-utils";
 
 const expected = new ExpectedChanges();
 const watcher = new OptimisticWatcher({

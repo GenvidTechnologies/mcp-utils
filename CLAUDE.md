@@ -4,28 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`genvid-mcp-utils` is a small TypeScript library of shared, dependency-light utilities for building MCP (Model Context Protocol) servers. It is a private package consumed within the Genvid monorepo, not published publicly. Each utility is independent — there is no central runtime or framework, just a flat set of helpers re-exported from `src/index.ts`.
+`@genvid/mcp-utils` is a small TypeScript library of shared, dependency-light utilities for building MCP (Model Context Protocol) servers. It is published publicly on npm under the `@genvid` scope. Each utility is independent — there is no central runtime or framework, just a flat set of helpers re-exported from `src/index.ts`.
 
 ## Commands
 
-Uses **pnpm** (see `pnpm-lock.yaml`). Node >= 22 is required.
+Uses **npm** (see `package-lock.json`). Node >= 22 is required.
 
 ```bash
-pnpm install            # install deps (CI uses --no-frozen-lockfile)
-pnpm run build          # tsc → dist/ (emits .js, .d.ts, declaration + source maps)
-pnpm run lint           # eslint, --max-warnings 0 over src/ and test/
-pnpm run typecheck      # tsc -p tsconfig.test.json --noEmit (typechecks src AND test)
-pnpm run test           # mocha over test/**/*.test.ts
+npm install             # install deps (CI uses `npm ci` against package-lock.json)
+npm run build           # tsc → dist/ (emits .js, .d.ts, declaration + source maps)
+npm run lint            # eslint, --max-warnings 0 over src/ and test/
+npm run typecheck       # tsc -p tsconfig.test.json --noEmit (typechecks src AND test)
+npm run test            # mocha over test/**/*.test.ts
 ```
 
 Run a single test file or filter by name:
 
 ```bash
-pnpm exec mocha --timeout 5000 --import=tsx --require ./test/setup.ts test/rwlock.test.ts --exit
-pnpm exec mocha --timeout 5000 --import=tsx --require ./test/setup.ts 'test/**/*.test.ts' --exit --grep "write-preferring"
+npx mocha --timeout 5000 --import=tsx --require ./test/setup.ts test/rwlock.test.ts --exit
+npx mocha --timeout 5000 --import=tsx --require ./test/setup.ts 'test/**/*.test.ts' --exit --grep "write-preferring"
 ```
 
-CI (CircleCI, `.circleci/config.yml`) runs lint → typecheck → test → build in order, inside a 1Password/Azure-authenticated shell.
+CI runs on **GitHub Actions** via the shared `genvid-public-ci` recipe:
+
+- `.github/workflows/ci.yml` — on PRs and pushes to `main`, calls the reusable `node-gate` (lint → typecheck → test → build).
+- `.github/workflows/publish.yml` — on `v*.*.*` tags, re-runs the gate then publishes to npm via OIDC **trusted publishing** (`npm publish --provenance --access public`). A guard fails the run if the tag (minus `v`) doesn't equal `package.json` `version`.
+
+To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `genvid-public-ci` README).
 
 ## Key conventions
 
