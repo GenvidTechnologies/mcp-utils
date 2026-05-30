@@ -61,10 +61,11 @@ export interface OptimisticWatcherOptions {
  * NOT leave the watcher permanently suppressed.
  *
  * **Layer 2 — pre-registered path (async race).**
- * Call `expect(path)` (or `expected.add(path)`) before triggering a write.
- * If the watcher event arrives *after* the suppress window has closed (an
- * async race that can happen on fast filesystems), `expected.consume(path)`
- * will still catch and drop it.
+ * Call `expect(path)` before triggering a write. If the watcher event arrives
+ * *after* the suppress window has closed (an async race that can happen on
+ * fast filesystems), the pre-registration still catches and drops it. Both
+ * `expect()` and the default watcher factory key on the **resolved absolute
+ * POSIX path**, so a relative or non-canonical write path matches correctly.
  *
  * ## Cancelled-write idiom (caller's responsibility)
  *
@@ -110,7 +111,9 @@ export class OptimisticWatcher {
       ((dir, onEvent) => {
         const w = fs.watch(dir, { recursive: true }, (_event, filename) => {
           if (filename == null) return;
-          onEvent(toPosixPath(path.join(dir, filename.toString())));
+          // Resolve (not just join) so the fired path is canonical absolute
+          // POSIX — the exact form `expect()` stores, so Layer-2 matches.
+          onEvent(toPosixPath(path.resolve(dir, filename.toString())));
         });
         return { close: () => w.close() };
       });
@@ -135,10 +138,14 @@ export class OptimisticWatcher {
    * Register `filePath` with the shared `ExpectedChanges` registry so that
    * the next watcher event for that path is suppressed (Layer 2).
    *
-   * Delegates to `this.expected.add(filePath)`.
+   * `filePath` is resolved to a canonical absolute path before registration
+   * (`path.resolve`) so it matches the absolute POSIX path the default watcher
+   * factory fires — callers may therefore pass a relative or non-canonical
+   * write path (e.g. the same path handed to `fs.writeFile`) and Layer-2
+   * suppression still matches.
    */
   expect(filePath: string): void {
-    this.expected.add(filePath);
+    this.expected.add(path.resolve(filePath));
   }
 
   /**

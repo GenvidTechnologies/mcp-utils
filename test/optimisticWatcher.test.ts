@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { expect } from "chai";
 import { ExpectedChanges } from "../src/expectedChanges.js";
+import { toPosixPath } from "../src/strings.js";
 import {
   OptimisticWatcher,
   type WatcherFactory,
@@ -175,7 +176,33 @@ describe("OptimisticWatcher", () => {
 
       const p = "/tmp/a/known.ts";
       w.expect(p);
-      fireAll(p);
+      // Mirror the default factory: it fires the resolved absolute POSIX path.
+      fireAll(toPosixPath(path.resolve(p)));
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(0);
+      expect(externalCalls).to.have.length(0);
+      expect(ec.size).to.equal(0);
+    });
+
+    it("relative expect() path matches the resolved absolute path the watcher fires", async () => {
+      // Regression: a caller registers a relative/non-canonical write path
+      // (as handed to fs.writeFile), but the default factory fires the
+      // resolved absolute POSIX path. expect() must resolve so they match,
+      // otherwise the program's own write is misclassified as external.
+      const externalCalls: string[] = [];
+      const { factory, fireAll } = makeFakeFactory();
+      const ec = new ExpectedChanges();
+      const w = new OptimisticWatcher({
+        watchDirs: [path.resolve("data")],
+        expected: ec,
+        onExternalChange: (p) => externalCalls.push(p),
+        watcherFactory: factory,
+      });
+      w.start();
+
+      w.expect("data/x.json"); // relative, as a write path would be
+      fireAll(toPosixPath(path.resolve("data/x.json"))); // what the real factory fires
       await Promise.resolve();
 
       expect(w.txId).to.equal(0);
