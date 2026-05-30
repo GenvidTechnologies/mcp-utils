@@ -99,7 +99,6 @@ export class OptimisticWatcher {
   private _txId = 0;
   private suppressDepth = 0;
   private handles: WatchHandle[] = [];
-  private started = false;
 
   constructor(options: OptimisticWatcherOptions) {
     this.watchDirs = options.watchDirs;
@@ -178,8 +177,7 @@ export class OptimisticWatcher {
    * Idempotent: a second call while already started is a no-op.
    */
   start(): void {
-    if (this.started) return;
-    this.started = true;
+    if (this.handles.length > 0) return;
     for (const dir of this.watchDirs) {
       const handle = this.watcherFactory(dir, (filename) =>
         this.handleEvent(filename),
@@ -201,7 +199,6 @@ export class OptimisticWatcher {
       h.close();
     }
     this.handles = [];
-    this.started = false;
     this.logger?.("OptimisticWatcher stopped.");
   }
 

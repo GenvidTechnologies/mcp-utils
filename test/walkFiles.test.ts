@@ -2,7 +2,7 @@ import { expect } from "chai";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { walkFiles, _walkFilesHooks } from "../src/walkFiles.js";
+import { walkFiles } from "../src/walkFiles.js";
 
 describe("walkFiles", () => {
   let tmpDir: string;
@@ -46,21 +46,14 @@ describe("walkFiles", () => {
   });
 
   it("propagates non-ENOENT errors (e.g. EACCES)", () => {
-    // ESM live bindings are read-only from consumers, so we cannot
-    // monkey-patch fs.readdirSync directly. Instead we swap the property on
-    // the _walkFilesHooks object, which is a plain mutable object whose
-    // properties CAN be reassigned.
-    const original = _walkFilesHooks.readdirSync;
-    try {
-      _walkFilesHooks.readdirSync = () => {
-        const err = new Error("Permission denied") as NodeJS.ErrnoException;
-        err.code = "EACCES";
-        throw err;
-      };
-      expect(() => walkFiles(tmpDir, ".json")).to.throw("Permission denied");
-    } finally {
-      _walkFilesHooks.readdirSync = original;
-    }
+    // ESM namespace members can't be monkey-patched, so inject a stub reader
+    // via the optional `readdir` parameter to simulate a permission error.
+    const throwingReaddir = (): fs.Dirent[] => {
+      const err = new Error("Permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    };
+    expect(() => walkFiles(tmpDir, ".json", throwingReaddir)).to.throw("Permission denied");
   });
 
   it("does not recurse into symlinked directories", function () {

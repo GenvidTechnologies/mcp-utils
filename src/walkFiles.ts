@@ -1,18 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/**
- * Internal hooks object that delegates filesystem calls used by `walkFiles`.
- * Exposed so tests can substitute implementations to simulate I/O errors
- * without relying on ESM live-binding mutation (which is read-only from
- * consumers in Node.js 22+).
- *
- * @internal
- */
-export const _walkFilesHooks = {
-  readdirSync: (d: string, opts: { withFileTypes: true }): fs.Dirent[] =>
-    fs.readdirSync(d, opts),
-};
+/** Signature of the synchronous directory reader `walkFiles` depends on. */
+type ReaddirSync = (dir: string, opts: { withFileTypes: true }) => fs.Dirent[];
 
 /**
  * Recursively walks `dir` and returns absolute paths of all files whose path
@@ -24,6 +14,10 @@ export const _walkFilesHooks = {
  * @param match - Either a suffix string (e.g. `".json"`) for a simple
  *                `path.endsWith(suffix)` test, or an arbitrary predicate
  *                `(absolutePath: string) => boolean`.
+ * @param readdir - Injectable directory reader; defaults to `fs.readdirSync`.
+ *                Exists so tests can substitute a stub (e.g. to simulate
+ *                `EACCES`) — ESM namespace members can't be monkey-patched in
+ *                Node 22+. Production callers should omit it.
  *
  * Symlinks are not followed: only entries for which `entry.isDirectory()`
  * returns `true` are recursed into. A symlink to a directory returns `false`
@@ -31,7 +25,8 @@ export const _walkFilesHooks = {
  */
 export function walkFiles(
   dir: string,
-  match: string | ((filePath: string) => boolean)
+  match: string | ((filePath: string) => boolean),
+  readdir: ReaddirSync = (d, opts) => fs.readdirSync(d, opts)
 ): string[] {
   const predicate: (filePath: string) => boolean =
     typeof match === "string" ? (p) => p.endsWith(match) : match;
@@ -41,7 +36,7 @@ export function walkFiles(
   function recurse(d: string): void {
     let entries: fs.Dirent[];
     try {
-      entries = _walkFilesHooks.readdirSync(d, { withFileTypes: true });
+      entries = readdir(d, { withFileTypes: true });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         return;
