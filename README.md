@@ -138,10 +138,13 @@ const posix = toPosixPath("C:\\Users\\dev\\project"); // "C:/Users/dev/project"
 
 ### resolveWithin
 
-Resolves `rel` against `base` and returns the absolute path only if it stays within `base`; returns `null` otherwise. Use this as a path-traversal guard when accepting user-supplied paths.
+Resolves `rel` against `base` and returns the absolute path only if it stays within `base`; returns `null` otherwise. Use this as a path-traversal guard when accepting user-supplied path **strings**.
 
 - `""` and `"."` resolve to `base` itself and are returned.
-- A `rel` containing `..` segments that escape `base`, an absolute path outside `base`, or a cross-drive path on Windows all return `null`.
+- A `rel` that escapes `base` via `..` segments, an absolute path outside `base`, or a cross-drive path on Windows all return `null`.
+- A filename that merely starts with `..` without traversing upward (e.g. `..gitkeep`) stays inside `base` and is returned.
+
+> **Lexical only.** This does no filesystem access and does **not** resolve symlinks — a symlink inside `base` pointing outside it will be accepted. For an on-disk containment guarantee (sandboxing attacker-supplied paths against symlink escapes), `fs.realpath` the result and re-check.
 
 ```ts
 import { resolveWithin } from "genvid-mcp-utils";

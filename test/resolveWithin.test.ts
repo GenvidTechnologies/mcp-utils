@@ -24,6 +24,17 @@ describe("resolveWithin", () => {
     expect(result).to.be.null;
   });
 
+  it('bare ".." (parent traversal) → null', () => {
+    expect(resolveWithin(base, "..")).to.be.null;
+  });
+
+  it('".."-prefixed filename that stays inside base (..gitkeep) → returned, not rejected', () => {
+    const result = resolveWithin(base, "..gitkeep");
+    expect(result).to.equal(path.resolve(base, "..gitkeep"));
+    expect(result).to.not.be.null;
+    expect(result!.startsWith(base)).to.be.true;
+  });
+
   it('"" → returns base (resolved)', () => {
     const result = resolveWithin(base, "");
     expect(result).to.equal(path.resolve(base));
