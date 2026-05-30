@@ -57,8 +57,15 @@ describe("paginateText", () => {
   it("returns empty text when offset > totalLines", () => {
     const result = paginateText(TEST_TEXT, { offset: 25 });
     expect(result.text).to.equal("");
+    expect(result.returnedLines).to.equal(0);
     expect(result.totalLines).to.equal(20);
     expect(result.hasMore).to.be.false;
+  });
+
+  it("returnedLines reflects the number of lines actually returned", () => {
+    expect(paginateText(TEST_TEXT, { offset: 5, limit: 10 }).returnedLines).to.equal(10);
+    expect(paginateText(TEST_TEXT, { offset: 19, limit: 10 }).returnedLines).to.equal(2);
+    expect(paginateText(TEST_TEXT, {}).returnedLines).to.equal(20);
   });
 
   it("hasMore is true when there are lines after the returned range", () => {

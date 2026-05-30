@@ -33,12 +33,23 @@ describe("paginatedContent", () => {
     );
   });
 
-  it("handles empty page (offset beyond total)", () => {
+  it("handles empty page (offset beyond total): 'lines: 0 / N', no leading blanks", () => {
     // paginateText("a\nb\nc\n", { offset: 5, limit: 2 })
-    //   => { text: "", totalLines: 3, offset: 5, limit: 2, hasMore: false }
-    // returnedLines = 0, endLine = 5 + max(0, 0-1) = 5 + 0 = 5
+    //   => { text: "", returnedLines: 0, totalLines: 3, offset: 5, ... }
+    // An out-of-range page returns zero lines, so the footer reports a count
+    // of 0 (not a misleading "5-5" range) and there is no page text to prefix.
     const result = paginatedContent("a\nb\nc\n", { offset: 5, limit: 2 });
-    expect((result.content[0] as { text: string }).text).to.equal("\n\nlines: 5-5 / 3");
+    expect((result.content[0] as { text: string }).text).to.equal("lines: 0 / 3");
+  });
+
+  it("omits the range footer when neither offset nor limit is supplied", () => {
+    const result = paginatedContent("a\nb\nc\n", {});
+    expect((result.content[0] as { text: string }).text).to.equal("a\nb\nc");
+  });
+
+  it("still appends a footer callback when not paginated", () => {
+    const result = paginatedContent("a\nb\nc\n", {}, () => "note");
+    expect((result.content[0] as { text: string }).text).to.equal("a\nb\nc\nnote");
   });
 
   it("type-checks: return value is assignable to CallToolResult", () => {

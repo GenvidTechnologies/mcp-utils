@@ -89,6 +89,7 @@ const result = paginateText("a\nb\nc\n", { offset: 2, limit: 1 });
 | Field | Type | Description |
 |-------|------|-------------|
 | `text` | `string` | The requested slice of text |
+| `returnedLines` | `number` | Number of lines actually returned (`0` for an out-of-range page) |
 | `totalLines` | `number` | Total line count of the input |
 | `offset` | `number` | Actual offset used |
 | `limit` | `number` | Actual limit used |
@@ -199,13 +200,21 @@ text(); // "processed 3 files\ndone"
 
 ### paginatedContent
 
-Wraps `paginateText` and returns a `CallToolResult` whose single text block combines the page text and a `lines: A-B / total` range footer, joined with a blank line (`"\n\n"`). An optional `footer(r)` callback receives the full `PaginatedResult` and its return value is appended after the range footer on a new line.
+Wraps `paginateText` and returns a `CallToolResult` whose single text block combines the page text and a `lines: A-B / total` range footer, joined with a blank line (`"\n\n"`). The range footer is emitted **only when `offset` or `limit` was supplied** (matching the consumer's `paginatedResponse`); an un-paginated call returns the whole text with no footer. An out-of-range page reports `lines: 0 / total` (no misleading range, no leading blank lines). An optional `footer(r)` callback receives the full `PaginatedResult` and its return value is appended on a new line; the callback always runs.
 
 ```ts
 import { paginatedContent } from "genvid-mcp-utils";
 
 const result = paginatedContent("a\nb\nc\n", { offset: 1, limit: 2 });
 // result.content[0].text === "a\nb\n\nlines: 1-2 / 3"
+
+// No offset/limit → no range footer:
+paginatedContent("a\nb\nc\n", {});
+// content[0].text === "a\nb\nc"
+
+// Out-of-range page → "lines: 0 / N":
+paginatedContent("a\nb\nc\n", { offset: 5, limit: 2 });
+// content[0].text === "lines: 0 / 3"
 
 // With an optional caller footer:
 const withFooter = paginatedContent(

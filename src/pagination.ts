@@ -16,6 +16,8 @@ export interface PaginationOptions {
 export interface PaginatedResult {
   /** The slice of text for the requested page */
   text: string;
+  /** Number of lines actually returned in `text` (0 for an out-of-range page) */
+  returnedLines: number;
   /** Total line count of the input (trailing newline does not add a line) */
   totalLines: number;
   /** Actual offset used (1 if not specified) */
@@ -33,7 +35,7 @@ export interface PaginatedResult {
  *
  * @example
  * paginateText("a\nb\nc\n", { offset: 2, limit: 1 })
- * // => { text: "b", totalLines: 3, offset: 2, limit: 1, hasMore: true }
+ * // => { text: "b", returnedLines: 1, totalLines: 3, offset: 2, limit: 1, hasMore: true }
  */
 export function paginateText(fullText: string, options: PaginationOptions): PaginatedResult {
   // Split and discard the trailing empty string produced by a terminal "\n"
@@ -56,6 +58,7 @@ export function paginateText(fullText: string, options: PaginationOptions): Pagi
 
   return {
     text: pageLines.join("\n"),
+    returnedLines: pageLines.length,
     totalLines,
     offset: actualOffset,
     limit: actualLimit,

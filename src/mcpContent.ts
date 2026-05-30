@@ -16,26 +16,22 @@ import { paginateText, type PaginationOptions, type PaginatedResult } from "./pa
  *
  * The returned content block contains:
  * 1. The page text from `paginateText`.
- * 2. A blank line separator (`"\n\n"`).
- * 3. A range-footer line: `lines: <offset>-<endLine> / <totalLines>`.
- * 4. Optionally, if `footer` is provided, a newline followed by the string
- *    returned by `footer(r)` where `r` is the full `PaginatedResult`.
+ * 2. **Only when `offset` or `limit` was supplied** (i.e. the output was
+ *    actually paginated): a blank-line separator (`"\n\n"`) and a range footer.
+ *    - Non-empty page: `lines: <offset>-<offset+returnedLines-1> / <totalLines>`.
+ *    - Empty/out-of-range page: `lines: 0 / <totalLines>` (no misleading range,
+ *      and no leading blank lines since there is no page text).
+ * 3. Optionally, if `footer` is provided, a newline followed by `footer(r)`
+ *    where `r` is the full `PaginatedResult`. The footer callback always runs.
  *
- * The range-footer line format matches the consumer reference exactly:
- * ```
- * const returnedLines = page.text === "" ? 0 : page.text.split("\n").length;
- * const endLine = page.offset + Math.max(0, returnedLines - 1);
- * // → `lines: ${page.offset}-${endLine} / ${page.totalLines}`
- * ```
- *
- * The range footer is always included regardless of whether `offset`/`limit`
- * were supplied.
+ * When neither `offset` nor `limit` is supplied the whole text is returned with
+ * no range footer — matching the consumer's `paginatedResponse`, which only
+ * emits the footer when pagination narrowed the output.
  *
  * @param fullText   The full text to paginate.
  * @param options    Pagination options (`offset`, `limit`).
  * @param footer     Optional callback receiving the `PaginatedResult`; its
- *                   return value is appended after the range footer on a new
- *                   line.
+ *                   return value is appended on a new line.
  * @returns A `CallToolResult` with a single text content block. No `isError`
  *          field is set (this is always a success response).
  */
@@ -45,14 +41,21 @@ export function paginatedContent(
   footer?: (r: PaginatedResult) => string,
 ): CallToolResult {
   const page = paginateText(fullText, options);
+  const paginated = options.offset !== undefined || options.limit !== undefined;
 
-  const returnedLines = page.text === "" ? 0 : page.text.split("\n").length;
-  const endLine = page.offset + Math.max(0, returnedLines - 1);
-  const rangeFooterLine = `lines: ${page.offset}-${endLine} / ${page.totalLines}`;
+  let text = page.text;
 
-  let text = page.text + "\n\n" + rangeFooterLine;
+  if (paginated) {
+    const rangeFooterLine =
+      page.returnedLines === 0
+        ? `lines: 0 / ${page.totalLines}`
+        : `lines: ${page.offset}-${page.offset + page.returnedLines - 1} / ${page.totalLines}`;
+    text = text === "" ? rangeFooterLine : `${text}\n\n${rangeFooterLine}`;
+  }
+
   if (footer) {
-    text = text + "\n" + footer(page);
+    const extra = footer(page);
+    text = text === "" ? extra : `${text}\n${extra}`;
   }
 
   return {
