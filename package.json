@@ -1,6 +1,6 @@
 {
 	"name": "genvid-mcp-utils",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"license": "MIT-0",
 	"author": "Genvid Technologies, inc. <support@genvidtech.com>",
 	"type": "module",
