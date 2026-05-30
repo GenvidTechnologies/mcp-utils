@@ -1,13 +1,29 @@
 {
-	"name": "genvid-mcp-utils",
+	"name": "@genvid/mcp-utils",
 	"version": "0.2.0",
+	"description": "Dependency-light TypeScript utilities for building MCP (Model Context Protocol) servers: concurrency control, file-change tracking, text pagination, path/filesystem helpers, and MCP response/error/annotation helpers.",
 	"license": "MIT-0",
 	"author": "Genvid Technologies, inc. <support@genvidtech.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/genvid-holdings/genvid-mcp-utils.git"
+	},
+	"homepage": "https://github.com/genvid-holdings/genvid-mcp-utils#readme",
+	"bugs": "https://github.com/genvid-holdings/genvid-mcp-utils/issues",
+	"keywords": [
+		"mcp",
+		"model-context-protocol",
+		"typescript",
+		"utilities"
+	],
 	"type": "module",
-	"main": "./src/index.ts",
-	"types": "./src/index.ts",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
 	"exports": {
-		".": "./src/index.ts"
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
 	},
 	"files": [
 		"dist",
@@ -15,17 +31,11 @@
 		"README.md"
 	],
 	"publishConfig": {
-		"main": "./dist/index.js",
-		"types": "./dist/index.d.ts",
-		"exports": {
-			".": {
-				"types": "./dist/index.d.ts",
-				"default": "./dist/index.js"
-			}
-		}
+		"access": "public"
 	},
 	"scripts": {
 		"build": "tsc",
+		"prepack": "npm run build",
 		"test": "mocha --timeout 5000 --import=tsx --require ./test/setup.ts 'test/**/*.test.ts' --exit",
 		"lint": "eslint --ext .ts --max-warnings 0 src/ test/",
 		"typecheck": "tsc -p tsconfig.test.json --noEmit"

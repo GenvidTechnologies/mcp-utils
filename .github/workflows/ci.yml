@@ -1,0 +1,12 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    uses: genvid-holdings/genvid-public-ci/.github/workflows/node-gate.yml@main
+    with:
+      dry-run: true
