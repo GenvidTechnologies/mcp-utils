@@ -43,10 +43,33 @@ To cut a release: bump `version` in `package.json`, merge to `main`, then `git t
 
 ## Utilities (`src/`)
 
+**Concurrency & state**
+
 - `rwlock.ts` — `ReadWriteLock`: promise-based, **write-preferring** RW lock. New reads queue behind pending writes to prevent writer starvation; `drain()` services the write queue before releasing queued readers.
 - `expectedChanges.ts` — `ExpectedChanges`: tracks paths an MCP write tool is about to modify so a file watcher can suppress self-triggered change events. Entries auto-expire (TTL default 5000 ms); `consume()` checks+removes, `purgeExpired()` cleans stale entries.
-- `pagination.ts` — `paginateText`: line-based pagination with 1-based `offset`/`limit`; a trailing newline is not counted as a line.
+- `optimisticWatcher.ts` — `OptimisticWatcher`: watches directories and classifies events as self-writes (suppressed) vs. external (forwarded to `onExternalChange`, bumps `txId`). Two-layer suppression: a synchronous `suppress(fn)` window plus `expect(path)` pre-registration (built on `ExpectedChanges`). Injectable `watcherFactory` seam for tests; default wraps `fs.watch({ recursive: true })`.
+
+**Filesystem & path**
+
+- `walkFiles.ts` — `walkFiles(dir, match, readdir?)`: recursively returns absolute paths of files matching a suffix string or predicate. Missing dir → `[]`; other I/O errors re-thrown; symlinked dirs not followed. `readdir` is an injectable test seam (see ESM error-path note above).
+- `resolveWithin.ts` — `resolveWithin(base, rel)`: lexical path-traversal guard. Returns the resolved absolute path only if it stays within `base`, else `null`. No filesystem access / no symlink resolution.
+- `loadProjectConfig.ts` — `loadProjectConfig(projectRoot, fileName, schema, overrides?, opts?, readFile?)`: reads + JSON-parses a project-root config, shallow-merges `opts.defaults < file < overrides`, validates against a consumer-supplied **zod** schema, and asserts `opts.containedPaths` keys stay within `projectRoot` via `resolveWithin`. Returns `T | CallToolResult` — **never throws**; failures (missing required file, parse error, schema violation, path escape) come back as `mcpError`. `isMcpError` narrows the union. `zod` is a **peerDependency** (only `import type { ZodType }` is used). `readFile` is an injectable test seam.
+
+**Strings**
+
+- `strings.ts` — `escapeRegExp` (escape regex metacharacters for literal `RegExp` use) and `toPosixPath` (backslashes → forward slashes).
+
+**MCP response/error/annotation helpers**
+
+- `mcpError.ts` — `mcpError(e, extraLines?)` converts a caught value into a `CallToolResult` with `isError: true`; `withMcpErrors(fn, extraLines?)` wraps an async handler so thrown errors return `mcpError(...)` (here `extraLines` is a **catch-time thunk** for mutable state).
+- `mcpContent.ts` — `paginatedContent(text, opts, footer?)`: wraps `paginateText` into a `CallToolResult` whose text combines the page and a `lines: A-B / total` footer (emitted only when `offset`/`limit` was supplied); optional caller `footer(r)` appended on a new line.
+- `pagination.ts` — `paginateText`: line-based pagination with 1-based `offset`/`limit`; a trailing newline is not counted as a line. Exports `PaginationOptions` / `PaginatedResult`.
+- `toolAnnotations.ts` — `READ_ONLY`, `REGENERATE`, `MUTATE`, `NON_IDEMPOTENT_READ`: `ToolAnnotations` presets for registering MCP tools (set `readOnlyHint` / `destructiveHint` / `idempotentHint`).
 - `exposeDocs.ts` — `exposeDocs(server, packageDir)`: registers MCP resources serving `docs/*.md` (templated `docs:///{name}`) and `README.md` (`docs:///readme`) from a consuming package's directory.
+
+**Shared types**
+
+- `bufferingLogger.ts` — `bufferingLogger()`: a `Logger` that buffers log calls in memory; returns `{ log, text }` where `text()` joins buffered lines with `"\n"`.
 - `types.ts` — `Logger` type, a minimal logging interface used across utilities.
 
-When adding a utility: implement in `src/<name>.ts`, re-export from `src/index.ts`, add `test/<name>.test.ts`, and document it in `README.md` (the README is user-facing API docs for this package).
+When adding a utility: implement in `src/<name>.ts`, re-export from `src/index.ts`, add `test/<name>.test.ts`, and document it in `README.md` (the README is user-facing API docs for this package). Keep this list in sync.

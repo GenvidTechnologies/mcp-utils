@@ -1,11 +1,17 @@
 # @genvid/mcp-utils
 
-Shared utilities for building MCP servers: concurrency control, file-change tracking, text pagination, path and filesystem helpers, MCP response and error helpers, tool annotations, and optimistic file watching.
+Shared utilities for building MCP servers: concurrency control, file-change tracking, text pagination, path and filesystem helpers, MCP response and error helpers, tool annotations, optimistic file watching, and project-config loading.
 
 ## Installation
 
 ```sh
 npm install @genvid/mcp-utils
+```
+
+`zod` is a **peer dependency** (`^3.23.0`) — only required if you use `loadProjectConfig`. Install it alongside this package:
+
+```sh
+npm install zod
 ```
 
 ```ts
@@ -14,7 +20,7 @@ import {
   walkFiles, resolveWithin, escapeRegExp, toPosixPath,
   mcpError, withMcpErrors, bufferingLogger, paginatedContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
-  OptimisticWatcher,
+  OptimisticWatcher, loadProjectConfig, isMcpError,
 } from "@genvid/mcp-utils";
 ```
 
@@ -290,6 +296,50 @@ watcher.stop();
 ```
 
 The `watcherFactory` option (type `WatcherFactory`) accepts an injectable factory that starts a watcher and returns a `WatchHandle`. The default wraps `fs.watch({ recursive: true })`. Override it in tests to drive events programmatically without touching the filesystem.
+
+### loadProjectConfig / isMcpError
+
+Loads a single JSON config file from a project root, merges in defaults and overrides, validates it against a [zod](https://zod.dev) schema you supply, and optionally asserts that nominated path fields stay within the project root. The schema and its DTO stay in the **consuming** package — this utility owns only the load + validate + contain mechanism. `zod` is a peer dependency; only `import type { ZodType }` is used here (the schema's `.parse()` runs on the object you pass in), so no second zod copy is pulled into your tree.
+
+It does **not throw** on failure: a missing required file, JSON parse error, schema violation, or path escape all return an `mcpError` `CallToolResult` (with `isError: true`). On success it returns the validated config `T`. Use the `isMcpError` type guard to narrow the `T | CallToolResult` union — in an MCP tool handler you can propagate the error result straight through:
+
+```ts
+import { z } from "zod";
+import { loadProjectConfig, isMcpError } from "@genvid/mcp-utils";
+
+const ConfigSchema = z.object({
+  extractedDir: z.string().default("build"),
+  port: z.number().default(3000),
+});
+
+const cfg = await loadProjectConfig(
+  projectRoot,
+  "my-tool.config.json",
+  ConfigSchema,
+  { port: requestArgs.port },        // overrides (highest precedence)
+  {
+    defaults: { extractedDir: "dist" },
+    containedPaths: ["extractedDir"], // must resolve within projectRoot
+    optional: true,                   // missing file → use defaults, don't error
+  },
+);
+
+if (isMcpError(cfg)) return cfg; // propagate parse/validation/containment failure
+// cfg is now the validated config (typed as z.infer<typeof ConfigSchema>)
+console.log(cfg.extractedDir, cfg.port);
+```
+
+**Merge precedence (highest → lowest):** `overrides` > file contents > `opts.defaults` > schema `.default()`. All layers are shallow-merged at the top level — nested objects are not deep-merged.
+
+**LoadConfigOpts**
+
+| Field | Type | Description |
+|---|---|---|
+| `containedPaths` | `(keyof T)[]` | Keys whose string values must resolve within `projectRoot` (via `resolveWithin`). Assertion-only — the value is returned as authored, not rewritten to an absolute path. Non-string values are skipped. |
+| `optional` | `boolean` | When `true`, a missing file (ENOENT) skips the file layer instead of erroring; defaults and schema `.default()` still apply. |
+| `defaults` | `Partial<T>` | Lowest-precedence values, merged under the file contents and `overrides`. |
+
+All error messages are prefixed with `loadProjectConfig(<fileName>):` for unambiguous failure attribution. Schema validation failures append each zod issue (`<path>: <message>`) to the error text.
 
 ## Requirements
 

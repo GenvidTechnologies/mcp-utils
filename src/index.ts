@@ -12,3 +12,4 @@ export { paginatedContent } from "./mcpContent.js";
 export { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "./toolAnnotations.js";
 export { OptimisticWatcher } from "./optimisticWatcher.js";
 export type { OptimisticWatcherOptions, WatcherFactory, WatchHandle } from "./optimisticWatcher.js";
+export { loadProjectConfig, isMcpError, type LoadConfigOpts } from "./loadProjectConfig.js";
