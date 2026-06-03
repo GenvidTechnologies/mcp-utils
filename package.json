@@ -44,12 +44,15 @@
 		"node": ">=22"
 	},
 	"dependencies": {
-		"@modelcontextprotocol/sdk": "^1.27.1",
+		"@modelcontextprotocol/sdk": "^1.27.1"
+	},
+	"peerDependencies": {
 		"zod": "^3.23.0"
 	},
 	"devDependencies": {
 		"mocha": "^10.4.0",
 		"chai": "^5.1.1",
+		"zod": "^3.23.0",
 		"@types/node": "^22.0.0",
 		"@types/mocha": "^10.0.6",
 		"@types/chai": "^4.3.16",
