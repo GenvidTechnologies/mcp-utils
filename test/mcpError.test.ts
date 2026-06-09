@@ -227,4 +227,41 @@ describe("withMcpErrors", () => {
       text: "err\nextra",
     });
   });
+
+  it("legacy thunk that throws degrades gracefully (no extra lines, does not reject)", async () => {
+    const wrapped = withMcpErrors(
+      async () => {
+        throw new Error("primary");
+      },
+      () => {
+        throw new Error("thunk-threw");
+      },
+    );
+    const result = await wrapped();
+    // The primary error is still reported; the throwing thunk contributes nothing.
+    expect((result as CallToolResult).content[0]).to.deep.equal({
+      type: "text",
+      text: "primary",
+    });
+  });
+
+  it("options: extraLines thunk that throws degrades gracefully (still never throws out)", async () => {
+    const wrapped = withMcpErrors(
+      async () => {
+        throw new Error("primary");
+      },
+      {
+        prefix: "Error:",
+        extraLines: () => {
+          throw new Error("thunk-threw");
+        },
+      },
+    );
+    const result = await wrapped();
+    // Prefix still applies; the throwing extraLines thunk is dropped.
+    expect((result as CallToolResult).content[0]).to.deep.equal({
+      type: "text",
+      text: "Error: primary",
+    });
+  });
 });

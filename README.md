@@ -171,7 +171,7 @@ Helpers that turn thrown errors into `CallToolResult` responses with `isError: t
 
 `withMcpErrors(fn, opts?)` wraps an async handler so any thrown error is caught and returned as `mcpError(...)`. The second argument is either the legacy **thunk** `() => string[]` (called only at catch time — useful for reading mutable state such as a log buffer or transaction counter that may have changed between the call and the throw) **or** an options object `{ extraLines?, onError?, prefix? }`:
 
-- `extraLines: () => string[]` — same catch-time thunk semantics as the legacy form.
+- `extraLines: () => string[]` — same catch-time thunk semantics as the legacy form. A thunk that throws degrades to no extra lines (the primary error is still reported); `withMcpErrors` never throws out.
 - `onError: (err) => void | Promise<void>` — a side-effect hook invoked with the caught error **before** it is formatted, and **awaited**. Use it to run cleanup that must happen even on the error path (e.g. bumping an optimistic-concurrency watcher because files were already written before a cancellation). If `onError` itself throws, the thrown value is formatted in place of the original error — `withMcpErrors` still never throws out.
 - `prefix: string` — passed through to `mcpError` (see above).
 

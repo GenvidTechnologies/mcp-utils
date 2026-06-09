@@ -55,6 +55,20 @@ export interface WithMcpErrorsOptions {
 }
 
 /**
+ * Evaluate an `extraLines` thunk without ever letting it throw. A thunk that
+ * throws degrades to `undefined` (no extra lines) rather than escaping
+ * {@link withMcpErrors} — the primary error must still be reported.
+ */
+function safeExtraLines(thunk?: () => string[]): string[] | undefined {
+  if (thunk === undefined) return undefined;
+  try {
+    return thunk();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Wraps an async function so that any thrown error is caught and returned as a
  * {@link CallToolResult} error response instead of propagating.
  *
@@ -62,7 +76,8 @@ export interface WithMcpErrorsOptions {
  * @param opts - Either a legacy `() => string[]` thunk (backward-compatible)
  *   or a {@link WithMcpErrorsOptions} object.
  *   - Legacy form: `withMcpErrors(fn, () => ["extra"])` — the thunk is
- *     called at catch time (not at wrap time) so it can read mutable state.
+ *     called at catch time (not at wrap time) so it can read mutable state. A
+ *     thunk that throws degrades to no extra lines rather than escaping.
  *   - Options form: `withMcpErrors(fn, { prefix: "Error:", onError, extraLines })`.
  *     `onError` is awaited before formatting; if it throws, the thrown value
  *     replaces the original error in the formatted result.
@@ -77,7 +92,7 @@ export function withMcpErrors<T extends (...a: any[]) => Promise<any>>(
     } catch (err) {
       if (typeof opts === "function") {
         // Legacy positional thunk form
-        return mcpError(err, opts());
+        return mcpError(err, safeExtraLines(opts));
       }
 
       // Options object form (or undefined)
@@ -91,7 +106,7 @@ export function withMcpErrors<T extends (...a: any[]) => Promise<any>>(
       }
       return mcpError(errorToFormat, {
         prefix: opts?.prefix,
-        extraLines: opts?.extraLines?.(),
+        extraLines: safeExtraLines(opts?.extraLines),
       });
     }
   }) as T;
