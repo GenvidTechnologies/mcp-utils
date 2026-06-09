@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { paginatedContent } from "../src/mcpContent.js";
+import { paginatedContent, mcpContent } from "../src/mcpContent.js";
 
 describe("paginatedContent", () => {
   it("returns correct text block for first page with limit", () => {
@@ -23,14 +23,8 @@ describe("paginatedContent", () => {
 
   it("appends footer callback result after range footer", () => {
     // r.hasMore is true (endIndex 2 < totalLines 3)
-    const result = paginatedContent(
-      "a\nb\nc\n",
-      { offset: 1, limit: 2 },
-      (r) => "more: " + r.hasMore,
-    );
-    expect((result.content[0] as { text: string }).text).to.equal(
-      "a\nb\n\nlines: 1-2 / 3\nmore: true",
-    );
+    const result = paginatedContent("a\nb\nc\n", { offset: 1, limit: 2 }, (r) => "more: " + r.hasMore);
+    expect((result.content[0] as { text: string }).text).to.equal("a\nb\n\nlines: 1-2 / 3\nmore: true");
   });
 
   it("handles empty page (offset beyond total): 'lines: 0 / N', no leading blanks", () => {
@@ -55,6 +49,37 @@ describe("paginatedContent", () => {
   it("type-checks: return value is assignable to CallToolResult", () => {
     // Compile-time assertion; if it compiles the test passes.
     const _: CallToolResult = paginatedContent("a\n", { offset: 1 });
+    expect(_.content).to.have.lengthOf(1);
+  });
+});
+
+describe("mcpContent", () => {
+  it("text only (no footer) → single block with input text, isError is undefined", () => {
+    const result = mcpContent("hello world");
+    expect(result.content).to.have.lengthOf(1);
+    expect(result.content[0].type).to.equal("text");
+    expect((result.content[0] as { text: string }).text).to.equal("hello world");
+    expect(result.isError).to.equal(undefined);
+  });
+
+  it("text + footer → joined by a single newline", () => {
+    const result = mcpContent("result", "txId: 5");
+    expect((result.content[0] as { text: string }).text).to.equal("result\ntxId: 5");
+  });
+
+  it("empty text + footer → footer only, no leading newline", () => {
+    const result = mcpContent("", "txId: 5");
+    expect((result.content[0] as { text: string }).text).to.equal("txId: 5");
+  });
+
+  it("explicit empty-string footer with non-empty text → trailing newline (documents !== undefined behavior)", () => {
+    const result = mcpContent("result", "");
+    expect((result.content[0] as { text: string }).text).to.equal("result\n");
+  });
+
+  it("type-checks: return value is assignable to CallToolResult, content has length 1", () => {
+    // Compile-time assertion; if it compiles the test passes.
+    const _: CallToolResult = mcpContent("data", "txId: 1");
     expect(_.content).to.have.lengthOf(1);
   });
 });

@@ -62,3 +62,27 @@ export function paginatedContent(
     content: [{ type: "text", text }],
   };
 }
+
+/**
+ * Build a single-block success {@link CallToolResult} from `text` plus an
+ * optional trailing `footer` line.
+ *
+ * The success-path counterpart to `mcpError`: it lets a result and trailing
+ * metadata (e.g. `txId: <n>`) ride inside ONE text content block instead of
+ * the caller hand-rolling a second block. The `footer` is a plain string the
+ * caller computes (unlike {@link paginatedContent}'s callback, there is no
+ * derived result to pass).
+ *
+ * - With `footer`: `text` and `footer` are joined by a single `"\n"`. When
+ *   `text` is empty, only the footer is emitted (no leading newline).
+ * - Without `footer`: the block contains just `text`.
+ * - No `isError` field is set (always a success response).
+ *
+ * @param text   The result text.
+ * @param footer Optional trailing line appended after `text` on a new line.
+ * @returns A `CallToolResult` with a single text content block.
+ */
+export function mcpContent(text: string, footer?: string): CallToolResult {
+  const body = footer !== undefined ? (text === "" ? footer : `${text}\n${footer}`) : text;
+  return { content: [{ type: "text", text: body }] };
+}
