@@ -18,7 +18,7 @@ npm install zod
 import {
   ReadWriteLock, ExpectedChanges, paginateText,
   walkFiles, resolveWithin, escapeRegExp, toPosixPath,
-  mcpError, withMcpErrors, bufferingLogger, paginatedContent,
+  mcpError, withMcpErrors, bufferingLogger, paginatedContent, mcpContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
   OptimisticWatcher, loadProjectConfig, isMcpError,
 } from "@genvid/mcp-utils";
@@ -167,9 +167,13 @@ resolveWithin("/project", "");             // "/project"
 
 Helpers that turn thrown errors into `CallToolResult` responses with `isError: true`, so MCP tool handlers can report failures without letting exceptions propagate to the transport layer.
 
-`mcpError(e, extraLines?)` converts a caught value into a `CallToolResult`. `Error` instances use `.message`; everything else is converted with `String(e)`. The optional `extraLines` array is appended to the message and evaluated eagerly at call time.
+`mcpError(e, extraLines?)` converts a caught value into a `CallToolResult`. `Error` instances use `.message`; everything else is converted with `String(e)`. The second argument is either the legacy `string[]` of `extraLines` (appended to the message, evaluated eagerly) **or** an options object `{ prefix?, extraLines? }`. An opt-in `prefix` is prepended as `` `${prefix} ${message}` `` (single space; pass it without a trailing space, e.g. `"Error:"`); the default is no prefix, so existing callers are unaffected.
 
-`withMcpErrors(fn, extraLines?)` wraps an async handler so any thrown error is caught and returned as `mcpError(...)`. The `extraLines` argument here is a **thunk** `() => string[]` that is called only at catch time — useful for reading mutable state (e.g. a log buffer or transaction counter) that may have changed between the call and the throw.
+`withMcpErrors(fn, opts?)` wraps an async handler so any thrown error is caught and returned as `mcpError(...)`. The second argument is either the legacy **thunk** `() => string[]` (called only at catch time — useful for reading mutable state such as a log buffer or transaction counter that may have changed between the call and the throw) **or** an options object `{ extraLines?, onError?, prefix? }`:
+
+- `extraLines: () => string[]` — same catch-time thunk semantics as the legacy form. A thunk that throws degrades to no extra lines (the primary error is still reported); `withMcpErrors` never throws out.
+- `onError: (err) => void | Promise<void>` — a side-effect hook invoked with the caught error **before** it is formatted, and **awaited**. Use it to run cleanup that must happen even on the error path (e.g. bumping an optimistic-concurrency watcher because files were already written before a cancellation). If `onError` itself throws, the thrown value is formatted in place of the original error — `withMcpErrors` still never throws out.
+- `prefix: string` — passed through to `mcpError` (see above).
 
 ```ts
 import { mcpError, withMcpErrors, bufferingLogger } from "@genvid/mcp-utils";
@@ -181,6 +185,10 @@ try {
   return mcpError(err, ["context: file write failed"]);
 }
 
+// Opt-in "Error:" prefix:
+mcpError(new Error("boom"), { prefix: "Error:" });
+// content[0].text === "Error: boom"
+
 // Wrap a handler; extraLines thunk reads state at catch time
 const { log, text } = bufferingLogger();
 const handler = withMcpErrors(
@@ -190,6 +198,15 @@ const handler = withMcpErrors(
     return { content: [{ type: "text", text: "ok" }] };
   },
   () => [text()],  // captures log output accumulated before the throw
+);
+
+// Options form: run a side-effect on the error path, then prefix the message
+const mutateHandler = withMcpErrors(
+  async (args) => mutateAndRespond(args),
+  {
+    onError: (err) => { if (err instanceof CancelledError) watcher.bump(); },
+    prefix: "Error:",
+  },
 );
 ```
 
@@ -231,6 +248,20 @@ const withFooter = paginatedContent(
   (r) => `hasMore: ${r.hasMore}`,
 );
 // withFooter.content[0].text === "a\nb\n\nlines: 1-2 / 3\nhasMore: true"
+```
+
+### mcpContent
+
+The success-path counterpart to `mcpError`. `mcpContent(text, footer?)` builds a `CallToolResult` with a **single** text block from a result plus an optional trailing `footer` line — so a result and its trailing metadata (e.g. `txId: <n>`) ride inside one block instead of the caller hand-rolling a second content block. Unlike `paginatedContent`'s footer callback, `footer` here is a plain string the caller computes (there is no derived result to pass). `text` and `footer` are joined by a single `"\n"`; when `text` is empty only the footer is emitted. No `isError` field is set.
+
+```ts
+import { mcpContent } from "@genvid/mcp-utils";
+
+mcpContent("wrote 3 files");
+// content[0].text === "wrote 3 files"
+
+mcpContent("wrote 3 files", `txId: ${txId}`);
+// content[0].text === "wrote 3 files\ntxId: 7"
 ```
 
 ### Tool annotation presets
