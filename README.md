@@ -17,7 +17,7 @@ npm install zod
 ```ts
 import {
   ReadWriteLock, ExpectedChanges, paginateText,
-  walkFiles, resolveWithin, escapeRegExp, toPosixPath,
+  walkFiles, resolveWithin, resolveRootFolder, escapeRegExp, toPosixPath,
   mcpError, withMcpErrors, bufferingLogger, paginatedContent, mcpContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
   OptimisticWatcher, loadProjectConfig, isMcpError,
@@ -162,6 +162,57 @@ resolveWithin("/project", "src/index.ts"); // "/project/src/index.ts"
 resolveWithin("/project", "../secret");    // null  — escapes base
 resolveWithin("/project", "");             // "/project"
 ```
+
+### resolveRootFolder
+
+Resolves a project root directory for an MCP server using a four-level precedence chain — `explicit` > `env` > `discovery` > `cwd` — so bundled servers launched with no CLI arguments don't need to hand-roll this logic.
+
+```ts
+import { resolveRootFolder, isMcpError } from "@genvid/mcp-utils";
+
+const result = resolveRootFolder({
+  explicit: args.projectDir,        // highest precedence: CLI flag
+  envVar: "MY_SERVER_PROJECT_DIR",  // second: environment variable
+  marker: "project.c3proj",         // discovery: look for this entry in child dirs
+  searchDepth: 2,                   // how many levels below cwd to search (default: 1)
+});
+
+if (isMcpError(result)) return result; // propagate any error
+const { path, source } = result;
+if (source === "cwd") {
+  console.warn("No project root found; using cwd:", path);
+}
+```
+
+**ResolveRootFolderOpts**
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `marker` | `string` | — | Filename or directory name that identifies a project root (e.g. `"project.c3proj"`, `".git"`). Required; must be non-empty/non-whitespace or an `mcpError` is returned. |
+| `explicit` | `string` | — | Highest-precedence override. Relative values are resolved against `cwd`; absolute values used as-is. **No containment restriction** — a `../sibling` path is permitted. |
+| `envVar` | `string` | — | Name of an environment variable to check when `explicit` is absent. Same resolution rules as `explicit`. |
+| `cwd` | `string` | `process.cwd()` | Starting directory for discovery and the resolution base for relative `explicit`/`envVar` values. |
+| `searchDepth` | `number` | `1` | Maximum depth below `cwd` at which to search for the marker. Depth `1` checks immediate children of `cwd`; depth `0` checks only `cwd` itself. |
+
+**ResolvedRoot**
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | `string` | Absolute path to the resolved project root. |
+| `source` | `"explicit" \| "env" \| "discovery" \| "cwd"` | How the root was determined. `"cwd"` means no marker was found anywhere — the silent fallback; consumers typically warn on this value. |
+
+**Resolution algorithm**
+
+1. If `opts.explicit` is set and non-blank → return it (resolved to absolute). No containment restriction.
+2. Else if `opts.envVar` is set and the named env var is non-blank → return it (resolved to absolute). No containment restriction.
+3. Else search for a directory that **contains** `opts.marker`:
+   - Check `cwd` itself (depth 0), then scan child directories up to `opts.searchDepth`.
+   - Exactly 1 match → return it with `source: "discovery"`.
+   - 0 matches → fall through to step 4.
+   - ≥2 matches → return `mcpError` (ambiguous root). Only `cwd` and its descendants are searched; discovery never escapes the base directory.
+4. Return `cwd` with `source: "cwd"` — no marker found anywhere.
+
+**Never throws.** I/O errors from directory scanning are caught: `ENOENT` is treated as "no entries"; all other errors (e.g. `EACCES`) are returned as `mcpError`. Use `isMcpError` to narrow the `ResolvedRoot | CallToolResult` return type.
 
 ### mcpError / withMcpErrors
 
