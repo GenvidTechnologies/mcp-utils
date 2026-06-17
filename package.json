@@ -1,6 +1,6 @@
 {
 	"name": "@genvid/mcp-utils",
-	"version": "0.4.0",
+	"version": "0.5.0",
 	"description": "Dependency-light TypeScript utilities for building MCP (Model Context Protocol) servers: concurrency control, file-change tracking, text pagination, path/filesystem helpers, and MCP response/error/annotation helpers.",
 	"license": "MIT-0",
 	"author": "Genvid Technologies, inc. <support@genvidtech.com>",
