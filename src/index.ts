@@ -13,3 +13,4 @@ export { READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ } from "./toolAnnota
 export { OptimisticWatcher } from "./optimisticWatcher.js";
 export type { OptimisticWatcherOptions, WatcherFactory, WatchHandle } from "./optimisticWatcher.js";
 export { loadProjectConfig, isMcpError, type LoadConfigOpts } from "./loadProjectConfig.js";
+export { resolveRootFolder, type ResolveRootFolderOpts, type ResolvedRoot } from "./resolveRootFolder.js";
