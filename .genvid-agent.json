@@ -1,6 +1,6 @@
 {
   "project": {
-    "name": "@genvid/mcp-utils",
+    "name": "@genvidtech/mcp-utils",
     "description": "Dependency-light TypeScript utilities for building MCP servers in the Genvid monorepo.",
     "languages": ["typescript"]
   },

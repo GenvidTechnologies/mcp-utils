@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`@genvid/mcp-utils` is a small TypeScript library of shared, dependency-light utilities for building MCP (Model Context Protocol) servers. It is published publicly on npm under the `@genvid` scope. Each utility is independent — there is no central runtime or framework, just a flat set of helpers re-exported from `src/index.ts`.
+`@genvidtech/mcp-utils` is a small TypeScript library of shared, dependency-light utilities for building MCP (Model Context Protocol) servers. It is published publicly on npm under the `@genvidtech` scope. Each utility is independent — there is no central runtime or framework, just a flat set of helpers re-exported from `src/index.ts`.
 
 ## Commands
 
@@ -30,7 +30,7 @@ CI runs on **GitHub Actions** via the shared `genvid-public-ci` recipe:
 - `.github/workflows/ci.yml` — on PRs and pushes to `main`, calls the reusable `node-gate` (lint → typecheck → test → build).
 - `.github/workflows/publish.yml` — on `v*.*.*` tags, re-runs the gate then publishes to npm via OIDC **trusted publishing** (`npm publish --provenance --access public`). A guard fails the run if the tag (minus `v`) doesn't equal `package.json` `version`.
 
-To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `genvid-public-ci` README).
+To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `genvid-public-ci` README). A **scope rename** (e.g. `@genvid`→`@genvidtech`) or a **repo move** counts as this case too: OIDC trusted publishing binds to the `org/repo/workflow`, so renaming the scope (new package name) or moving the repo invalidates the existing Trusted Publisher binding — re-register it for the new package/repo before the next tag-publish, or the publish job fails.
 
 ## Key conventions
 
