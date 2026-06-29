@@ -7,7 +7,7 @@ on:
 
 jobs:
   gate:
-    uses: GenvidTechnologies/genvid-public-ci/.github/workflows/node-gate.yml@main
+    uses: genvid-holdings/genvid-public-ci/.github/workflows/node-gate.yml@main
 
   publish:
     needs: gate
