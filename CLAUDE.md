@@ -25,12 +25,14 @@ npx mocha --timeout 5000 --import=tsx --require ./test/setup.ts test/rwlock.test
 npx mocha --timeout 5000 --import=tsx --require ./test/setup.ts 'test/**/*.test.ts' --exit --grep "write-preferring"
 ```
 
-CI runs on **GitHub Actions** via the shared `genvid-public-ci` recipe:
+CI runs on **GitHub Actions** via the shared `GenvidTechnologies/public-github-actions` recipe (formerly `genvid-holdings/genvid-public-ci` — the repo was both renamed and moved):
 
 - `.github/workflows/ci.yml` — on PRs and pushes to `main`, calls the reusable `node-gate` (lint → typecheck → test → build).
 - `.github/workflows/publish.yml` — on `v*.*.*` tags, re-runs the gate then publishes to npm via OIDC **trusted publishing** (`npm publish --provenance --access public`). A guard fails the run if the tag (minus `v`) doesn't equal `package.json` `version`.
 
-To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `genvid-public-ci` README). A **scope rename** (e.g. `@genvid`→`@genvidtech`) or a **repo move** counts as this case too: OIDC trusted publishing binds to the `org/repo/workflow`, so renaming the scope (new package name) or moving the repo invalidates the existing Trusted Publisher binding — re-register it for the new package/repo before the next tag-publish, or the publish job fails.
+To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `public-github-actions` README). A **scope rename** (e.g. `@genvid`→`@genvidtech`) or a **repo move** counts as this case too: OIDC trusted publishing binds to the `org/repo/workflow`, so renaming the scope (new package name) or moving the repo invalidates the existing Trusted Publisher binding — re-register it for the new package/repo before the next tag-publish, or the publish job fails.
+
+A repo/org rename also breaks the reusable-workflow references: the `uses:` lines in `ci.yml`/`publish.yml` must point at the **current canonical** repo path. GitHub's API (`gh api`, `gh repo view`) silently follows repo-rename redirects, but **Actions `uses:` does not** — so a stale reference passes every API check yet fails the run instantly with a 0s "workflow file issue". Confirm the canonical path with `gh api repos/<owner>/<repo> --jq .full_name` and update both workflow files. (This bit us migrating to `@genvidtech`: #9 left the references pointing at the old, redirect-only `genvid-public-ci` path.)
 
 ## Key conventions
 
