@@ -1,15 +1,15 @@
 {
-	"name": "@genvid/mcp-utils",
+	"name": "@genvidtech/mcp-utils",
 	"version": "0.5.0",
 	"description": "Dependency-light TypeScript utilities for building MCP (Model Context Protocol) servers: concurrency control, file-change tracking, text pagination, path/filesystem helpers, and MCP response/error/annotation helpers.",
 	"license": "MIT-0",
 	"author": "Genvid Technologies, inc. <support@genvidtech.com>",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/genvid-holdings/genvid-mcp-utils.git"
+		"url": "git+https://github.com/GenvidTechnologies/mcp-utils.git"
 	},
-	"homepage": "https://github.com/genvid-holdings/genvid-mcp-utils#readme",
-	"bugs": "https://github.com/genvid-holdings/genvid-mcp-utils/issues",
+	"homepage": "https://github.com/GenvidTechnologies/mcp-utils#readme",
+	"bugs": "https://github.com/GenvidTechnologies/mcp-utils/issues",
 	"keywords": [
 		"mcp",
 		"model-context-protocol",
