@@ -19,9 +19,8 @@ them. Because this is a shared, published helper, every consumer inherits the be
 A caller *can* work around it — the offending entries do reach the predicate, since a
 symlink's dirent fails `isDirectory()` and falls through to the predicate branch — so a
 `statSync(p).isFile()` guard inside a predicate filters them out. But that duplicates the
-same stat in every predicate at every call site (7 in `construct3-chef` alone, plus
-`c3-domain-manager`), and it puts the guarantee in the callers rather than in the helper
-that owes it.
+same stat in every predicate at every call site (7 in `construct3-chef`), and it puts the
+guarantee in the callers rather than in the helper that owes it.
 
 The question the classification actually needs to answer is not "is this entry a
 directory?" but **"will a subsequent read of this path succeed?"**
@@ -79,10 +78,20 @@ matching, which are rare in practice.
 
 **Accepted cost: a visible output change.** Directory symlinks and broken symlinks whose
 names matched the predicate were previously returned and no longer are. That *is* the
-fix, but consumers of a published package see their results change. There is no
-`CHANGELOG.md` in this repo, so the announcement rides in the commit body, the README,
-and this record. Known exposure at the time of writing: `construct3-chef` (7 call sites)
-and `c3-domain-manager`.
+fix, but consumers of a published package see their results change. The announcement
+rides in `CHANGELOG.md` (started at 0.6.0), the commit body, the README, and this record.
+
+Exposure, verified against each consumer's source rather than inferred:
+
+| Consumer | Uses `walkFiles`? | Exposure |
+|---|---|---|
+| `construct3-chef` | yes — 7 call sites (`generators.ts:541`, `search.ts:193/196/217/223`, `spriteScaffold.ts:42`, `cli.ts:400`) | real |
+| `c3-domain-manager` | **no** — imports MCP plumbing and `resolveRootFolder` only; its `CLAUDE.md` lists `walkFiles` among unadopted surface | none |
+
+Issue #10 described `c3-domain-manager` as "presumably similarly exposed"; that guess was
+wrong, and an earlier revision of this record repeated it as fact. Neither consumer picks
+the fix up automatically regardless: both pin `^0.5.1`, and a caret on a `0.x` version
+excludes `0.6.0`, so each needs an explicit range bump.
 
 ## Consequences
 
