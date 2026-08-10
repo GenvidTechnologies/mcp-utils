@@ -4,6 +4,31 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { walkFiles } from "../src/walkFiles.js";
 
+/**
+ * Creates a symlink, skipping the calling test on platforms that refuse to make
+ * one (Windows without Developer Mode or elevation, filesystems with no symlink
+ * support). On win32 a directory link is created as a **junction**, which never
+ * requires elevation and produces the same dirent shape these tests exercise:
+ * `isDirectory()` is `false` and `isSymbolicLink()` is `true`.
+ */
+function symlinkOrSkip(
+  ctx: Mocha.Context,
+  target: string,
+  linkPath: string,
+  kind: "file" | "dir"
+): void {
+  const type = kind === "dir" && process.platform === "win32" ? "junction" : kind;
+  try {
+    fs.symlinkSync(target, linkPath, type);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "EPERM" || code === "ENOSYS" || code === "EACCES") {
+      ctx.skip();
+    }
+    throw err;
+  }
+}
+
 describe("walkFiles", () => {
   let tmpDir: string;
 
@@ -77,5 +102,64 @@ describe("walkFiles", () => {
     const result = walkFiles(tmpDir, ".json").sort();
     const expected = [path.join(realSubDir, "secret.json")];
     expect(result).to.deep.equal(expected);
+  });
+
+  it("does not return a directory symlink whose name matches the predicate", function () {
+    const realFile = path.join(tmpDir, "real.json");
+    fs.writeFileSync(realFile, "{}");
+    const target = path.join(tmpDir, "sometree");
+    fs.mkdirSync(target);
+    fs.writeFileSync(path.join(target, "inner.json"), "{}");
+
+    // A directory link *named* like a match: the predicate would accept it, so
+    // only the file-vs-directory classification can keep it out of the result.
+    symlinkOrSkip(this, target, path.join(tmpDir, "linked.json"), "dir");
+
+    const result = walkFiles(tmpDir, ".json").sort();
+    const expected = [realFile, path.join(target, "inner.json")].sort();
+    expect(result).to.deep.equal(expected);
+  });
+
+  it("returns a symlink that points at a regular file", function () {
+    const realFile = path.join(tmpDir, "real.json");
+    fs.writeFileSync(realFile, "{}");
+    const link = path.join(tmpDir, "linked.json");
+    symlinkOrSkip(this, realFile, link, "file");
+
+    // Regression guard: a symlink to a regular file is readable, so it must stay
+    // in the result. A bare `entry.isFile()` check would silently drop it.
+    const result = walkFiles(tmpDir, ".json").sort();
+    expect(result).to.deep.equal([realFile, link].sort());
+  });
+
+  it("does not return a broken symlink", function () {
+    const realFile = path.join(tmpDir, "real.json");
+    fs.writeFileSync(realFile, "{}");
+    symlinkOrSkip(
+      this,
+      path.join(tmpDir, "missing-target"),
+      path.join(tmpDir, "broken.json"),
+      "file"
+    );
+
+    const result = walkFiles(tmpDir, ".json");
+    expect(result).to.deep.equal([realFile]);
+  });
+
+  it("completes the walk when a symlink cycle matches the predicate", function () {
+    const realFile = path.join(tmpDir, "real.json");
+    fs.writeFileSync(realFile, "{}");
+    const a = path.join(tmpDir, "a.json");
+    const b = path.join(tmpDir, "b.json");
+    symlinkOrSkip(this, b, a, "file"); // a -> b, dangling until b exists
+    symlinkOrSkip(this, a, b, "file"); // b -> a, closing the cycle
+
+    // Resolving either link raises ELOOP, which `throwIfNoEntry: false` does not
+    // suppress — the walk must absorb it rather than propagate it to the caller.
+    let result: string[] = [];
+    expect(() => {
+      result = walkFiles(tmpDir, ".json");
+    }).to.not.throw();
+    expect(result).to.deep.equal([realFile]);
   });
 });
