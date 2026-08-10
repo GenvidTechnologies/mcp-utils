@@ -32,7 +32,11 @@ CI runs on **GitHub Actions** via the shared `GenvidTechnologies/public-github-a
 - `.github/workflows/ci.yml` — on PRs and pushes to `main`, calls the reusable `node-gate` (lint → typecheck → test → build).
 - `.github/workflows/publish.yml` — on `v*.*.*` tags, re-runs the gate then publishes to npm via OIDC **trusted publishing** (`npm publish --provenance --access public`). A guard fails the run if the tag (minus `v`) doesn't equal `package.json` `version`.
 
-To cut a release: bump `version` in `package.json`, merge to `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `public-github-actions` README). A **scope rename** (e.g. `@genvid`→`@genvidtech`) or a **repo move** counts as this case too: OIDC trusted publishing binds to the `org/repo/workflow`, so renaming the scope (new package name) or moving the repo invalidates the existing Trusted Publisher binding — re-register it for the new package/repo before the next tag-publish, or the publish job fails.
+To cut a release, prefer `/gvt-dev:release-npm-package` — it runs the sequence below with the state and tag==version assertions. By hand: move `CHANGELOG.md`'s `[Unreleased]` content into a dated `## [X.Y.Z]` section, bump `version` in `package.json` (`npm version X.Y.Z --no-git-tag-version` — it updates all three manifest spots, `package.json` plus both in `package-lock.json`), land it on `main`, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Tags are **lightweight**, not annotated. **The tag push is the publish trigger** — pushing the branch alone does nothing to npm.
+
+**Version choice:** a change that alters an exported function's *observable output* takes a **minor** bump even when nothing was removed or renamed and semver would allow a patch. Consumers inherit the change silently, and the version number is the first signal they see. `walkFiles`' regular-file guarantee shipped as `0.6.0` for exactly this reason (#10) — it added an optional parameter and broke no signature, but stopped returning entries it used to return.
+
+The first publish of a new package name requires a one-time npm bootstrap + Trusted Publisher registration (see the `public-github-actions` README). A **scope rename** (e.g. `@genvid`→`@genvidtech`) or a **repo move** counts as this case too: OIDC trusted publishing binds to the `org/repo/workflow`, so renaming the scope (new package name) or moving the repo invalidates the existing Trusted Publisher binding — re-register it for the new package/repo before the next tag-publish, or the publish job fails.
 
 A repo/org rename also breaks the reusable-workflow references: the `uses:` lines in `ci.yml`/`publish.yml` must point at the **current canonical** repo path. GitHub's API (`gh api`, `gh repo view`) silently follows repo-rename redirects, but **Actions `uses:` does not** — so a stale reference passes every API check yet fails the run instantly with a 0s "workflow file issue". Confirm the canonical path with `gh api repos/<owner>/<repo> --jq .full_name` and update both workflow files. (This bit us migrating to `@genvidtech`: #9 left the references pointing at the old, redirect-only `genvid-public-ci` path.)
 
@@ -44,7 +48,32 @@ A repo/org rename also breaks the reusable-workflow references: the `uses:` line
 - **Two tsconfigs:** `tsconfig.json` (build, `composite`, emits `src` → `dist`) and `tsconfig.test.json` (extends it, `noEmit`, includes `test/` too — this is what `typecheck` uses).
 - Formatting/linting: Prettier + ESLint (`eslint:recommended` + `@typescript-eslint/recommended` + `prettier`). The unused-vars and `no-explicit-any` rules are intentionally disabled.
 - **Never-throw helpers must guard caller-supplied callbacks.** This package's contract is "return a `CallToolResult`, never throw" (`mcpError`, `withMcpErrors`, `loadProjectConfig`). Any caller-supplied callback or thunk a helper invokes (e.g. `withMcpErrors`'s `extraLines` thunk / `onError` hook) must be wrapped so a throwing callback degrades gracefully — never escaping the helper. See `safeExtraLines` and the `onError` try/catch in `src/mcpError.ts`.
-- **Testing error paths under ESM:** you cannot monkey-patch `node:*` namespace members (e.g. `(fs as any).readdirSync = …`) — ESM namespace objects are sealed/read-only in Node 22+. To make a built-in I/O call substitutable for a test (e.g. to simulate `EACCES`), accept the dependency as an optional parameter defaulting to the real implementation and have tests pass a stub. See `src/walkFiles.ts` (the `readdir` parameter defaulting to `fs.readdirSync`) — this keeps the seam in the function signature rather than a shared mutable export, so there is no public-API leak and no cross-test shared state.
+- **Testing error paths under ESM:** you cannot monkey-patch `node:*` namespace members (e.g. `(fs as any).readdirSync = …`) — ESM namespace objects are sealed/read-only in Node 22+. To make a built-in I/O call substitutable for a test (e.g. to simulate `EACCES`), accept the dependency as an optional parameter defaulting to the real implementation and have tests pass a stub. See `src/walkFiles.ts` (the `readdir` and `stat` parameters, defaulting to `fs.readdirSync` / `fs.statSync`) — this keeps the seam in the function signature rather than a shared mutable export, so there is no public-API leak and no cross-test shared state. Add a seam only for an error branch you cannot reach with a real fixture; prefer the real filesystem where it works (see the symlink note below).
+- **Symlink tests on Windows: use junctions, not `"dir"` symlinks.** `fs.symlinkSync(target, link, "dir")` needs elevation or Developer Mode on Windows, so a test that uses it **silently skips** on an unprivileged machine (and in the `EPERM` guard `test/walkFiles.test.ts` uses) rather than failing — the test looks green while never running. `"junction"` needs no elevation, works unprivileged everywhere, and produces the identical dirent shape: `isDirectory()` is `false`, `isSymbolicLink()` is `true`. Node ignores the type argument on POSIX, so `process.platform === "win32" ? "junction" : "dir"` is portable. Broken symlinks, symlink-to-file, and symlink **cycles** are all creatable unprivileged too, so most filesystem edge cases need a real fixture rather than a stub. Keep the `EPERM`/`ENOSYS` skip guard anyway, and confirm in the CI log that such tests report `✔` rather than pending.
+
+## Commit Format
+
+[Conventional Commits](https://www.conventionalcommits.org/). Subject is `<type>(<scope>): <summary>` in the imperative mood, lowercase, no trailing period. Scope is the module or area (`walkFiles`, `ci`, `decisions`, `release`) and is omitted when the change is repo-wide.
+
+Types in use here: `feat`, `fix`, `docs`, `test`, `refactor`, `chore`. Release commits are `chore(release): bump version to X.Y.Z`.
+
+The body explains **why**, not what — the diff already shows what. Wrap at ~78 columns. Where a change alters observable behavior, say so explicitly in the body; this repo has no automatic mechanism that surfaces it otherwise.
+
+Trailers: `Closes #N` for an issue the commit fully resolves, `Refs #N` for one it only touches. Note that `Closes #N` in **any** commit on a PR auto-closes the issue when the PR merges to `main`, independent of the PR body.
+
+## Branching
+
+Branch off `main` and name it `<type>/<kebab-slug>`, reusing the commit types — e.g. `fix/walkfiles-regular-files-only`, `chore/resync-conventions`. `main` is the default and is **not** protected, so release commits can be pushed to it directly; feature work still goes through a PR.
+
+**Rebase, don't merge.** Keep a feature branch current with `git rebase origin/main` (or `git merge --ff-only`) so the PR diff stays free of merge noise. PRs are **squash-merged**, so a branch becomes one commit on `main` — the PR title becomes the squash subject, and intermediate commit messages are preserved only in the PR.
+
+## Pull Request Format
+
+GitHub, via `gh pr create`. Title follows the commit format (it becomes the squash subject). Body sections: `## Summary` (3-5 bullets: what, why, what reviewers should scrutinize), `## Changes` grouped by area, and `## Test plan` as a checklist.
+
+Put the closing keyword in the **body**, not the title — a bare `(#N)` in a squash title cross-references the issue but never closes it.
+
+Call out any observable behavior change in its own reviewer-facing note, and flag commits unrelated to the PR's stated purpose so a reviewer can mentally filter them (or ask for them to be split out).
 
 ## Utilities (`src/`)
 
