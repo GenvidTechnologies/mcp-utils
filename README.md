@@ -117,9 +117,22 @@ function setup(log: Logger) {
 
 ### walkFiles
 
-Recursively walks a directory and returns the absolute paths of all files whose path satisfies `match`. If the directory does not exist the function returns `[]` without throwing; other I/O errors (e.g. `EACCES`) are re-thrown. Symlinked directories are not followed — only entries for which `entry.isDirectory()` returns `true` are recursed into.
+Recursively walks a directory and returns the absolute paths of all files whose path satisfies `match`. If the directory does not exist the function returns `[]` without throwing; other I/O errors (e.g. `EACCES`) from reading a directory are re-thrown. Symlinked directories are not followed — only entries for which `entry.isDirectory()` returns `true` are recursed into, which also means a symlink cycle is never entered.
+
+**Every returned path is a regular file**, so you can read any element of the result without a further check. Entries that are not regular files are never returned, even when their *name* satisfies `match`:
+
+| Entry | Returned? |
+|---|---|
+| regular file | yes |
+| directory | no (recursed into instead) |
+| symlink → regular file | yes — reading it succeeds |
+| symlink → directory (incl. Windows junctions) | no |
+| broken symlink, symlink cycle, socket, device | no |
+
+Ordinary entries are classified from the directory listing alone; only the leftovers (symlinks and special entries) cost one resolving `stat`, and only when they already matched `match`. An entry whose `stat` fails for any reason is dropped rather than propagated — failing to classify one leaf doesn't abort the walk, whereas failing to enumerate a directory does. See [ADR-0001](docs/decisions/0001-walkfiles-returns-only-regular-files.md).
 
 ```ts
+import { readFileSync } from "node:fs";
 import { walkFiles } from "@genvidtech/mcp-utils";
 
 // String match: suffix / endsWith test
@@ -127,7 +140,12 @@ const jsonFiles = walkFiles("/project/data", ".json");
 
 // Predicate match: arbitrary filter
 const testFiles = walkFiles("/project/src", (p) => p.includes(".test."));
+
+// Every result is readable — no isFile() guard needed
+for (const f of jsonFiles) JSON.parse(readFileSync(f, "utf-8"));
 ```
+
+The optional 3rd and 4th parameters (`readdir`, `stat`) are test seams that default to `fs.readdirSync` / `fs.statSync`; production callers omit both.
 
 ### escapeRegExp / toPosixPath
 
