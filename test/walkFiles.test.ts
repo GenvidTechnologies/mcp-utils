@@ -162,4 +162,23 @@ describe("walkFiles", () => {
     }).to.not.throw();
     expect(result).to.deep.equal([realFile]);
   });
+
+  it("drops an entry whose stat fails with EACCES, without throwing", function () {
+    const realFile = path.join(tmpDir, "real.json");
+    fs.writeFileSync(realFile, "{}");
+    symlinkOrSkip(this, realFile, path.join(tmpDir, "linked.json"), "file");
+
+    // Only the symlink reaches the stat -- a plain file is settled by
+    // `isFile()`. Injecting through the `stat` seam is the only way to make
+    // that stat fail deterministically: ESM namespace members can't be
+    // monkey-patched in Node 22+.
+    const throwingStat = (): fs.Stats | undefined => {
+      const err = new Error("Permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    };
+
+    const result = walkFiles(tmpDir, ".json", undefined, throwingStat);
+    expect(result).to.deep.equal([realFile]);
+  });
 });
