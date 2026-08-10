@@ -14,9 +14,14 @@ symlinks and symlink cycles were emitted the same way.
 
 Every caller of `walkFiles` treats its result as a list of readable files, so those
 entries surfaced as `EISDIR` at the read, one layer away from the helper that produced
-them. Because this is a shared, published helper, every consumer inherits the behavior
-and none can fully work around it: `walkFiles` decides file-vs-directory *before* the
-caller's predicate runs, so no predicate can filter these entries out.
+them. Because this is a shared, published helper, every consumer inherits the behavior.
+
+A caller *can* work around it — the offending entries do reach the predicate, since a
+symlink's dirent fails `isDirectory()` and falls through to the predicate branch — so a
+`statSync(p).isFile()` guard inside a predicate filters them out. But that duplicates the
+same stat in every predicate at every call site (7 in `construct3-chef` alone, plus
+`c3-domain-manager`), and it puts the guarantee in the callers rather than in the helper
+that owes it.
 
 The question the classification actually needs to answer is not "is this entry a
 directory?" but **"will a subsequent read of this path succeed?"**
@@ -84,10 +89,16 @@ and `c3-domain-manager`.
 - Callers can drop any defensive `statSync(...).isFile()` they wrapped around
   `walkFiles` results. `construct3-chef#160` fixed this same failure class one layer up
   and can now lean on the helper instead.
-- A predicate can no longer be used to *include* a non-regular entry — the
-  classification runs first, and the predicate only narrows. This is intended, and is
-  why `construct3-chef#159` (adding predicates to `walkFiles` call sites) cannot be
-  affected by, or substitute for, this fix.
+- A predicate can only ever *narrow* the result. It is still invoked on non-regular
+  entries — the predicate runs before the classification, not after — but the
+  regular-file check gates the push, so returning `true` for a directory symlink cannot
+  force it into the result. Verified with an always-matching predicate: the junction is
+  passed to the predicate and still not returned.
+- Because the predicate does see those entries, a caller-side `statSync(p).isFile()`
+  guard is a valid workaround against the *pre-fix* behavior, and
+  `construct3-chef#159` ships exactly that. Consumers were never blocked on this
+  release. Once this lands, that clause is redundant at those call sites and can be
+  dropped.
 - If a future caller genuinely needs directories or symlinks in the result, that is a
   new option on `walkFiles` (e.g. an `include` filter), not a relaxation of this
   guarantee — the guarantee is what makes the result safe to read unconditionally.
