@@ -132,6 +132,7 @@ Recursively walks a directory and returns the absolute paths of all files whose 
 Ordinary entries are classified from the directory listing alone; only the leftovers (symlinks and special entries) cost one resolving `stat`, and only when they already matched `match`. An entry whose `stat` fails for any reason is dropped rather than propagated — failing to classify one leaf doesn't abort the walk, whereas failing to enumerate a directory does. See [ADR-0001](docs/decisions/0001-walkfiles-returns-only-regular-files.md).
 
 ```ts
+import { readFileSync } from "node:fs";
 import { walkFiles } from "@genvidtech/mcp-utils";
 
 // String match: suffix / endsWith test
