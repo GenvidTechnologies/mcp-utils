@@ -11,6 +11,13 @@ This is a small, flat utility library — its primary docs live at the repo root
 - `../CLAUDE.md` — project conventions, commands, and the per-utility overview
   (the de-facto architecture/design reference for this package).
 
+## Process
+
+- [`code-review-context.md`](code-review-context.md) — project-specific context
+  for reviewers (and `gvt-dev:code-reviewer`): the invariants to review against,
+  the deliberate choices that only look like defects, and the release-affecting
+  checks.
+
 ## Decision Records
 
 - [`decisions/0001-walkfiles-returns-only-regular-files.md`](decisions/0001-walkfiles-returns-only-regular-files.md)
