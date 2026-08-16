@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { expect } from "chai";
 import { ExpectedChanges } from "../src/expectedChanges.js";
+import { ObservedState, type Fingerprinter } from "../src/observedState.js";
 import { toPosixPath } from "../src/strings.js";
 import {
   OptimisticWatcher,
@@ -266,6 +267,153 @@ describe("OptimisticWatcher", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Layer 3 — content unchanged since last accounted for
+  // -------------------------------------------------------------------------
+  describe("Layer 3 (observed content fingerprint)", () => {
+    it("T1: expect(p) then 3 duplicate fires, constant fingerprint → txId stays 0, onExternalChange never called", async () => {
+      const externalCalls: string[] = [];
+      const { factory, fireAll } = makeFakeFactory();
+      const ec = new ExpectedChanges();
+      const observed = new ObservedState({ fingerprint: () => "constant" });
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: ec,
+        observed,
+        onExternalChange: (p) => externalCalls.push(p),
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/known.ts";
+      w.expect(p);
+      const fired = toPosixPath(path.resolve(p));
+      fireAll(fired);
+      fireAll(fired);
+      fireAll(fired);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(0);
+      expect(externalCalls).to.have.length(0);
+    });
+
+    // T2 and T3 are a deliberate pair over one harness: T2 pins that
+    // duplicate events for unchanged content collapse into a single bump,
+    // T3 pins that genuinely distinct content never collapses — together
+    // they rule out the gate being trivially dead in either direction.
+    it("T2: never-expect()'d path, 3 duplicate fires, constant fingerprint → txId becomes 1, onExternalChange called once", async () => {
+      const externalCalls: string[] = [];
+      const { factory, fireAll } = makeFakeFactory();
+      const observed = new ObservedState({ fingerprint: () => "constant" });
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: new ExpectedChanges(),
+        observed,
+        onExternalChange: (p) => externalCalls.push(p),
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/unknown.ts";
+      fireAll(p);
+      fireAll(p);
+      fireAll(p);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(1);
+      expect(externalCalls).to.have.length(1);
+    });
+
+    it("T3: 3 fires with distinct fingerprints (a, b, c) → txId becomes 3", async () => {
+      const { factory, fireAll } = makeFakeFactory();
+      const values = ["a", "b", "c"];
+      let calls = 0;
+      const fingerprint: Fingerprinter = () => values[calls++];
+      const observed = new ObservedState({ fingerprint });
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: new ExpectedChanges(),
+        observed,
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/unknown.ts";
+      fireAll(p);
+      fireAll(p);
+      fireAll(p);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(3);
+    });
+
+    it("T4: a recorded value followed by an 'absent' fingerprint still bumps (deletion detected)", async () => {
+      const { factory, fireAll } = makeFakeFactory();
+      let currentValue = "abc";
+      const fingerprint: Fingerprinter = () => currentValue;
+      const observed = new ObservedState({ fingerprint });
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: new ExpectedChanges(),
+        observed,
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/deleted.ts";
+      observed.record(p); // seals "abc" as accounted for
+      currentValue = "absent"; // simulate deletion, per contentFingerprint's ENOENT contract
+
+      fireAll(p);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(1);
+    });
+
+    it("T5: a throwing fingerprinter fails open — 2 fires produce 2 bumps, never staleness", async () => {
+      const { factory, fireAll } = makeFakeFactory();
+      const fingerprint: Fingerprinter = () => {
+        throw new Error("fingerprinter boom");
+      };
+      const observed = new ObservedState({ fingerprint });
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: new ExpectedChanges(),
+        observed,
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/unstable.ts";
+      fireAll(p);
+      fireAll(p);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(2);
+    });
+
+    it("observed: null fully disables Layer 3 — 2 fires of the same path produce 2 bumps (opt-out preserved)", async () => {
+      const externalCalls: string[] = [];
+      const { factory, fireAll } = makeFakeFactory();
+      const w = new OptimisticWatcher({
+        watchDirs: ["/tmp/a"],
+        expected: new ExpectedChanges(),
+        observed: null,
+        onExternalChange: (p) => externalCalls.push(p),
+        watcherFactory: factory,
+      });
+      w.start();
+
+      const p = "/tmp/a/x.ts";
+      fireAll(p);
+      fireAll(p);
+      await Promise.resolve();
+
+      expect(w.txId).to.equal(2);
+      expect(externalCalls).to.have.length(2);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // §7 smoke — real fs.watch
   // -------------------------------------------------------------------------
   describe("§7 smoke (real fs.watch)", function () {
@@ -309,7 +457,7 @@ describe("OptimisticWatcher", () => {
         await new Promise(resolve => setTimeout(resolve, 50));
       }
 
-      expect(externalCalls.length).to.be.greaterThan(0);
+      expect(externalCalls.length).to.equal(1);
       // The reported path should end with "test.txt" (using forward slashes)
       expect(externalCalls[0]).to.include("test.txt");
     });

@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { Logger } from "./types.js";
 import { ExpectedChanges } from "./expectedChanges.js";
+import { ObservedState } from "./observedState.js";
 import { toPosixPath } from "./strings.js";
 
 /** A handle returned by a watcher factory that can be closed to stop watching. */
@@ -45,6 +46,19 @@ export interface OptimisticWatcherOptions {
   watcherFactory?: WatcherFactory;
   /** Optional logger for diagnostic messages. */
   logger?: Logger;
+  /**
+   * Content-fingerprint ledger used for Layer 3 suppression: a duplicate
+   * event for a path whose content hasn't actually changed since it was
+   * last accounted for is suppressed instead of bumping `txId` again.
+   *
+   * - `undefined` (default, i.e. omitted) — a fresh `new ObservedState()`
+   *   is constructed automatically, so Layer 3 is **on by default**.
+   * - `null` — Layer 3 is disabled (opt out), restoring the pre-Layer-3
+   *   behavior of bumping on every non-suppressed event.
+   * - An explicit `ObservedState` instance — reuse a shared/pre-configured
+   *   ledger (e.g. one with a custom fingerprinter, for tests).
+   */
+  observed?: ObservedState | null;
 }
 
 /**
@@ -52,7 +66,7 @@ export interface OptimisticWatcherOptions {
  * either **self-writes** (suppressed) or **external changes** (forwarded to
  * `onExternalChange` + bumps `txId`).
  *
- * ## Two-layer suppression
+ * ## Three-layer suppression
  *
  * **Layer 1 — synchronous suppress window.**
  * Wrap a write operation in `suppress(fn)`. While `fn` is executing,
@@ -66,6 +80,38 @@ export interface OptimisticWatcherOptions {
  * fast filesystems), the pre-registration still catches and drops it. Both
  * `expect()` and the default watcher factory key on the **resolved absolute
  * POSIX path**, so a relative or non-canonical write path matches correctly.
+ *
+ * **Layer 3 — content unchanged since last accounted for.**
+ * Some filesystems (observed on Windows) deliver more than one raw event for
+ * a single logical write. Layers 1 and 2 already suppress the *self-write*
+ * duplicates they see and — critically — also `record()` that path's content
+ * fingerprint into the shared `ObservedState` ledger, sealing it as
+ * "accounted for". If a further duplicate for the same path still reaches
+ * Layer 3 (e.g. arriving after the suppress window closed and after Layer 2
+ * already consumed the single expected-path registration), Layer 3 asks a
+ * question with no timing term at all: does this path's *content* differ
+ * from what was last accounted for? A duplicate event for unchanged content
+ * answers no and is suppressed; a genuinely distinct write answers yes and
+ * still bumps `txId`. Because the question carries no timing term, it is
+ * robust to a duplicate arriving arbitrarily later — unlike a debounce or
+ * dedup window, it cannot be defeated by widening the gap between events.
+ *
+ * Layer 3 fails open: an LRU eviction from a full ledger, a fingerprinter
+ * that throws, a hash taken mid-write, and an unreadable file all degrade
+ * toward reporting an *extra* bump — never toward suppressing a real change
+ * and going stale.
+ *
+ * That guarantee is a property of the *fingerprinter*, not of this layer. A
+ * fingerprinter that returns equal values for genuinely different content
+ * makes Layer 3 suppress a real change, which is staleness — the one failure
+ * this design does not tolerate. It is why the default hashes content rather
+ * than using a cheaper `size`+`mtime` stat, which was measured colliding on
+ * distinct same-size writes landing within the same filesystem timestamp
+ * tick (see ADR-0002). A custom `Fingerprinter` inherits that
+ * responsibility.
+ *
+ * Pass `observed: null` to disable Layer 3 entirely and restore pre-Layer-3
+ * behavior (every non-suppressed event bumps `txId`).
  *
  * ## Cancelled-write idiom (caller's responsibility)
  *
@@ -95,6 +141,7 @@ export class OptimisticWatcher {
   private readonly onExternalChange?: (filePath: string) => void;
   private readonly watcherFactory: WatcherFactory;
   private readonly logger?: Logger;
+  private readonly observed: ObservedState | null;
 
   private _txId = 0;
   private suppressDepth = 0;
@@ -105,6 +152,8 @@ export class OptimisticWatcher {
     this.expected = options.expected;
     this.onExternalChange = options.onExternalChange;
     this.logger = options.logger;
+    this.observed =
+      options.observed === undefined ? new ObservedState() : options.observed;
     this.watcherFactory =
       options.watcherFactory ??
       ((dir, onEvent) => {
@@ -209,14 +258,34 @@ export class OptimisticWatcher {
   private handleEvent(filename: string): void {
     // Layer 1: synchronous suppress window
     if (this.suppressDepth > 0) {
+      this.observed?.record(filename);
       this.logger?.("suppressed (L1):", filename);
       return;
     }
 
     // Layer 2: pre-registered expected path
     if (this.expected.consume(filename)) {
+      this.observed?.record(filename);
       this.logger?.("suppressed (L2):", filename);
       return;
+    }
+
+    // Layer 3: content unchanged since last accounted for.
+    // A throwing fingerprinter is treated as "changed" (fail open) so a
+    // broken/misbehaving fingerprinter degrades toward an extra bump,
+    // never toward silently suppressing a real external change.
+    if (this.observed) {
+      let changed: boolean;
+      try {
+        changed = this.observed.isChanged(filename);
+      } catch (err) {
+        this.logger?.("L3 fingerprint threw, treating as changed:", filename, err);
+        changed = true;
+      }
+      if (!changed) {
+        this.logger?.("suppressed (L3, state unchanged):", filename);
+        return;
+      }
     }
 
     // External change
