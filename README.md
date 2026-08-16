@@ -27,6 +27,40 @@ import {
 
 ## Utilities
 
+Each utility is independent — import only what you need. Grouped here the same way as the per-utility list in [`CLAUDE.md`](CLAUDE.md).
+
+**Concurrency & state**
+
+- [`ReadWriteLock`](#readwritelock) — promise-based, write-preferring read-write lock
+- [`ExpectedChanges`](#expectedchanges) — suppress self-triggered file-watcher events
+- [`OptimisticWatcher`](#optimisticwatcher) — classify watch events as self-writes vs. external
+- [`ObservedState`](#observedstate) — bounded path → content-fingerprint ledger
+
+**Filesystem & path**
+
+- [`walkFiles`](#walkfiles) — recursive walk returning only regular files
+- [`resolveWithin`](#resolvewithin) — lexical path-traversal guard
+- [`resolveRootFolder`](#resolverootfolder) — resolve a project root by precedence
+- [`loadProjectConfig` / `isMcpError`](#loadprojectconfig--ismcperror) — read, merge, and validate a project config
+
+**Strings**
+
+- [`escapeRegExp` / `toPosixPath`](#escaperegexp--toposixpath) — regex escaping and path separator normalization
+
+**MCP responses, errors & annotations**
+
+- [`mcpError` / `withMcpErrors`](#mcperror--withmcperrors) — turn a thrown value into a `CallToolResult`
+- [`mcpContent`](#mcpcontent) — success-path counterpart to `mcpError`
+- [`paginatedContent`](#paginatedcontent) — paginated text as a `CallToolResult`
+- [`paginateText`](#paginatetext) — line-based pagination
+- [Tool annotation presets](#tool-annotation-presets) — `READ_ONLY`, `REGENERATE`, `MUTATE`, `NON_IDEMPOTENT_READ`
+- [`exposeDocs`](#exposedocs) — serve a package's `docs/*.md` and `README.md` as MCP resources
+
+**Shared types**
+
+- [`bufferingLogger`](#bufferinglogger) — a `Logger` that buffers lines in memory
+- [`Logger` type](#logger-type) — the minimal logging interface used across utilities
+
 ### ReadWriteLock
 
 A promise-based, write-preferring read-write lock. Multiple concurrent readers are allowed; writers get exclusive access. Pending writes are serviced before queued reads to prevent write starvation.
@@ -353,6 +387,32 @@ server.tool("consume-event", schema, NON_IDEMPOTENT_READ, handler);
 | `REGENERATE` | `false` | `false` | `true` | Writes output but repeated calls produce the same result; nothing permanently lost |
 | `MUTATE` | `false` | `true` | `false` | Modifies or deletes data; cannot be trivially undone; result may differ across calls |
 | `NON_IDEMPOTENT_READ` | `true` | `false` | `false` | Reads without modification but each call may return different results (e.g. consuming a queue) |
+
+### exposeDocs
+
+Registers a consuming package's Markdown documentation as MCP resources, so a client can read the server's own docs. Takes the package directory and resolves `docs/` and `README.md` beneath it.
+
+```ts
+import { exposeDocs } from "@genvidtech/mcp-utils";
+
+// packageDir is your server package's root — the directory holding docs/ and README.md
+exposeDocs(server, packageDir);
+```
+
+Two resources are registered:
+
+| Resource | URI | Serves |
+|---|---|---|
+| `docs` | `docs:///{name}` (templated) | `<packageDir>/docs/<name>.md` |
+| `readme` | `docs:///readme` (static) | `<packageDir>/README.md` |
+
+Both are returned with `mimeType: "text/markdown"`. The `readme` resource is registered **only if `README.md` exists**; the templated `docs` resource is registered unconditionally, even when `docs/` is absent.
+
+Behavior worth knowing before you rely on it:
+
+- **Names are completion-only, not listable.** The template sets `list: undefined`, so clients cannot enumerate the available docs. Discovery happens through argument completion, which returns every `.md` basename found in `docs/`.
+- **The name list is a snapshot.** `docs/` is read once, when `exposeDocs` is called. Files added afterwards are served correctly if requested by name, but won't appear in completions until the server restarts.
+- **An unknown name throws.** The handler reads the resolved path directly, so requesting a `{name}` with no matching file surfaces the underlying `ENOENT` rather than an empty result.
 
 ### OptimisticWatcher
 

@@ -122,4 +122,13 @@ Call out any observable behavior change in its own reviewer-facing note, and fla
 - `bufferingLogger.ts` — `bufferingLogger()`: a `Logger` that buffers log calls in memory; returns `{ log, text }` where `text()` joins buffered lines with `"\n"`.
 - `types.ts` — `Logger` type, a minimal logging interface used across utilities.
 
-When adding a utility: implement in `src/<name>.ts`, re-export from `src/index.ts`, add `test/<name>.test.ts`, and document it in `README.md` (the README is user-facing API docs for this package). Keep this list in sync.
+When adding a utility: implement in `src/<name>.ts`, re-export from `src/index.ts`, add `test/<name>.test.ts`, and document it in `README.md` (the README is user-facing API docs for this package). Keep this list in sync. **Also add the utility to the grouped index at the top of README's `## Utilities` section** — a section that isn't indexed is invisible to a reader who lands on the npm package page, and the index is the only map that file has.
+
+**README growth is structural, not incidental.** The definition of done requires a README section per utility, so the file only ever grows: it went from ~3 KB (2026-04-03) to ~27 KB (2026-08-16) across 16 utilities, and 92% of it is the one `## Utilities` section. That is still navigable behind the grouped index, but it will not stay that way indefinitely.
+
+Two constraints make the eventual split a real decision rather than a tidy-up, and both are easy to miss:
+
+- `package.json` `files` is an **allow-list** (`["dist","LICENSE","README.md"]`), and `docs/` is not in it. Anything moved out of `README.md` **leaves the npm tarball** — package-page readers would get links to GitHub instead of the API docs.
+- `exposeDocs` serves `README.md` as the `docs:///readme` MCP resource, so a consuming server hands the whole file over as a single payload. Size has a downstream runtime cost, not just a scrolling cost.
+
+Revisit when the grouped index stops fitting on one screen (roughly 20–24 utilities). The likely shape is README keeping install + quickstart + the index with one-line blurbs, and per-utility docs moving to `docs/api/<name>.md` — but because of the tarball cost above, that move warrants an ADR rather than a judgment call in a PR.

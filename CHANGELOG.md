@@ -11,6 +11,15 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **Documented `exposeDocs` in `README.md`.** It has been exported from
+  `src/index.ts` since it shipped, but had no README section, so consumers had no
+  way to discover it from the package page. No behavior change — documentation
+  only.
+- **A grouped index at the top of README's `## Utilities` section**, covering all
+  17 documented exports.
+
 ## [0.7.0] - 2026-08-16
 
 ### Changed
