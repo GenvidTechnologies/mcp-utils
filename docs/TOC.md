@@ -23,6 +23,9 @@ This is a small, flat utility library — its primary docs live at the repo root
 - [`decisions/0001-walkfiles-returns-only-regular-files.md`](decisions/0001-walkfiles-returns-only-regular-files.md)
   — why `walkFiles` guarantees every returned path is a regular file, and why a
   failed `stat` drops the entry instead of propagating.
+- [`decisions/0002-observed-state-collapses-duplicate-watch-events.md`](decisions/0002-observed-state-collapses-duplicate-watch-events.md)
+  — why `OptimisticWatcher` gains a third, content-fingerprint suppression layer to
+  collapse the duplicate `fs.watch` events measured per single write.
 
 <!--
 No docs/architecture.md, design-patterns.md, or runbook.md: this package has no
