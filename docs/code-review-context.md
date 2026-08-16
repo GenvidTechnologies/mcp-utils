@@ -87,6 +87,14 @@ elevation and produce an identical dirent shape.
       this is the local instance of guardrail 7 (name the evidence, or report
       the gap).
 
+**The expected pending baseline is exactly one, and it is not a symlink test.**
+On Windows the suite reports `1 pending`: `test/resolveWithin.test.ts:49`, a
+POSIX-only case that legitimately skips on `win32` (its `win32` counterpart at
+`:65` runs instead). The `walkFiles` `EPERM` guards at `test/walkFiles.test.ts:26`
+and `:95` do **not** skip on an unprivileged Windows machine — junctions need no
+elevation — so they must show `✔`. A second pending entry means a filesystem
+test silently stopped running; find it rather than accepting the green.
+
 ### Dependency weight
 
 "Dependency-light" is a design constraint, not a slogan. Current runtime deps
@@ -94,6 +102,39 @@ are `@modelcontextprotocol/sdk` alone; `zod` is a **peerDependency** consumed
 only via `import type { ZodType }`. Adding a runtime dependency, or promoting
 `zod` from a type-only import to a value import, is an architectural decision
 that warrants a decision record.
+
+### Factual accuracy of prose against its source data
+
+No gate in this repo reads prose. Lint, `tsc`, and the full suite are all green
+on a docstring that states the exact opposite of what the code does, so
+docstrings, ADR bodies, README claims, and commit bodies are the one artifact
+class where "the checks passed" carries no signal at all. Where a change is
+justified by measurements — a probe table, a benchmark, a platform matrix —
+**diff every rendered claim against the source data before committing.**
+
+Rationale comments are the sharpest case: they exist to steer a future reader,
+so an inverted one argues *for* the change it was written to prevent.
+
+Three real instances from the #12 branch, all committed-clean by every
+automated gate before being caught by hand:
+
+- An ADR asserted a `statFingerprint` symbol "exists internally but is not
+  exported." It was never written. A maintainer would have gone looking for it.
+- `OptimisticWatcher`'s JSDoc listed "a fingerprinter that can't observe a real
+  difference" among the *fail-open* guarantees. That case is the exact opposite
+  — a fingerprint collision suppresses a real change, which is staleness, the
+  one failure the design exists to prevent. It cited the failure mode as proof
+  of safety.
+- The ADR said "L1 and L2 are untouched" one commit before both gained a
+  `record()` call — and those calls are load-bearing, not incidental.
+
+- [ ] Every measured figure in shipped text traces to data produced this
+      change, not transcribed from the issue that proposed it. An issue's
+      numbers may not reproduce — see the corrections table on
+      [#12](https://github.com/GenvidTechnologies/mcp-utils/issues/12).
+- [ ] No prose names a symbol, file, or option that doesn't exist.
+- [ ] A later task in the same branch didn't falsify a comment an earlier one
+      wrote. Only a whole-branch view catches this; the suite never will.
 
 ## Deliberate choices — do not flag these
 
@@ -109,6 +150,7 @@ concrete for this repo.
 | `resolveWithin` never touches the filesystem, so it doesn't resolve symlinks | It is a **lexical** traversal guard by design. Don't ask it to `realpath`. |
 | `package.json` `main`/`types`/`exports` point at `dist/` with a bare `publishConfig` | The old `publishConfig` field-override trick was removed — npm 11.x no longer applies it and silently shipped source-pointing manifests. Don't restore it. |
 | No `docs/architecture.md`, `design-patterns.md`, or `coding-conventions.md` | Intentional for a flat utility library; `CLAUDE.md` + `README.md` cover those dimensions. See the comment at the foot of [`TOC.md`](TOC.md). |
+| A feature branch leaves `package.json` `version` and `package-lock.json` untouched, even when its ADR or commit body says "ships as X.Y.Z" | Correct. The bump is its own `chore(release): bump version to X.Y.Z` commit made with `npm version` at release time — that updates the manifest and **both** lockfile spots together, and the publish workflow's tag==version guard checks against it. Naming the target version in an ADR is a *version-choice* decision, not an instruction to bump in the feature PR. Flagging the missing bump as a blocker sends the branch outside the documented release flow. |
 
 ## Adding or changing a utility
 

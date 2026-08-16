@@ -21,6 +21,7 @@ import {
   mcpError, withMcpErrors, bufferingLogger, paginatedContent, mcpContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
   OptimisticWatcher, loadProjectConfig, isMcpError,
+  ObservedState, contentFingerprint,
 } from "@genvidtech/mcp-utils";
 ```
 
@@ -355,12 +356,13 @@ server.tool("consume-event", schema, NON_IDEMPOTENT_READ, handler);
 
 ### OptimisticWatcher
 
-Watches one or more directories and classifies incoming change events as either **self-writes** (suppressed) or **external changes** (forwarded to `onExternalChange` and bumped into `txId`). Built on `ExpectedChanges` for path-level suppression and `fs.watch({ recursive: true })` by default.
+Watches one or more directories and classifies incoming change events as either **self-writes** (suppressed) or **external changes** (forwarded to `onExternalChange` and bumped into `txId`). Built on `ExpectedChanges` for path-level suppression, `ObservedState` for content-level dedup, and `fs.watch({ recursive: true })` by default.
 
-**Two-layer suppression**
+**Three-layer suppression**
 
 - **Layer 1 — synchronous suppress window.** Wrap a write in `suppress(fn)`. While `fn` is executing, every watcher event is silently dropped. The depth counter is always unwound in a `finally` block, so a throw inside `fn` leaves the watcher in a healthy state.
 - **Layer 2 — pre-registered path.** Call `expect(path)` before triggering a write. If the watcher event arrives after the suppress window has closed (an async race on fast filesystems), `ExpectedChanges.consume` still catches and drops it. Both `expect()` and the default watcher key on the **resolved absolute path**, so passing a relative write path (the same one handed to `fs.writeFile`) matches correctly.
+- **Layer 3 — content unchanged since last accounted for.** Some filesystems (observed on Windows) deliver more than one raw `fs.watch` event for a single logical write, so an external overwrite or a self-write can still reach `bump()` twice even after Layers 1 and 2. Layer 3 asks a question with no timing term: does this path's content actually differ from what was last recorded? A duplicate event over unchanged content is suppressed; a genuine change still bumps `txId`. It's backed by an `ObservedState` ledger — a fresh instance by default, or your own via the `observed` option — and Layers 1 and 2 feed it too (`record()` on every suppression), so a path they suppress is also sealed as accounted for. Pass `observed: null` to disable Layer 3 and restore pre-Layer-3 behavior (every non-suppressed event bumps `txId`). Layer 3 fails open: an evicted ledger entry, an unreadable file, or a throwing custom `Fingerprinter` all degrade toward an *extra* bump, never toward staleness. See [ADR-0002](docs/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for why content hashing is the default and what was rejected instead.
 
 **Cancelled-write idiom**
 
@@ -396,6 +398,50 @@ watcher.stop();
 ```
 
 The `watcherFactory` option (type `WatcherFactory`) accepts an injectable factory that starts a watcher and returns a `WatchHandle`. The default wraps `fs.watch({ recursive: true })`. Override it in tests to drive events programmatically without touching the filesystem.
+
+The `observed` option (type `ObservedState | null`) controls Layer 3: omit it and a default `ObservedState` is constructed for you (Layer 3 is **on by default**); pass an instance to reuse a shared or custom-fingerprinted ledger; pass `observed: null` to opt out of Layer 3 entirely.
+
+### ObservedState
+
+A per-path content-fingerprint ledger: tracks whether a file's content has changed since it was last accounted for. It's `OptimisticWatcher`'s Layer 3 suppression primitive (above), and is exported standalone for the same check-and-record pattern elsewhere.
+
+```ts
+import { ObservedState } from "@genvidtech/mcp-utils";
+
+const observed = new ObservedState(); // maxEntries optional, default 1000
+
+observed.isChanged("/path/to/file.json"); // true — never seen before; also records it
+observed.isChanged("/path/to/file.json"); // false — content unchanged since the last check
+// ...file is edited...
+observed.isChanged("/path/to/file.json"); // true — content differs from what was recorded
+
+observed.forget("/path/to/file.json"); // stop tracking; next isChanged() call reports true again
+```
+
+`isChanged(filePath)` is check-and-record: it fingerprints the current content, compares it against the stored value, stores the new fingerprint either way, and returns whether they differed — mirroring `ExpectedChanges.consume`'s check-and-remove shape. A path that has never been seen is treated as changed. `record(filePath)` stores the current fingerprint unconditionally with no comparison or return value — use it to seal a path as "accounted for" without caring whether it changed.
+
+The ledger is bounded by `maxEntries` (default 1000) with LRU eviction, so a long-running watch over a large tree doesn't grow it unboundedly; an evicted path simply reports changed again on its next check.
+
+The default `Fingerprinter` is the exported `contentFingerprint`: a sha1 hex digest of the file's bytes. A missing file (`ENOENT`) fingerprints as the literal string `"absent"` — a deletion is a real, detectable change. Any other read failure (e.g. `EACCES`) fingerprints as a unique per-failure token that can never compare equal to any other reading. Every failure mode fails open toward reporting an *extra* change rather than risking a missed one.
+
+Supply your own `Fingerprinter` — `(filePath: string) => string` — via the constructor for a cheaper, less precise comparison:
+
+```ts
+import { statSync } from "node:fs";
+
+const observed = new ObservedState({
+  // Cheaper than hashing, but see the caveat below before adopting this one:
+  // two distinct same-size writes landing in the same timestamp tick compare
+  // equal, and a fingerprint collision means a real change is silently missed.
+  fingerprint: (filePath) => {
+    const { size, mtimeMs } = statSync(filePath);
+    return `${size}:${mtimeMs}`;
+  },
+  maxEntries: 500,
+});
+```
+
+There is no `stat`-based fingerprinter built in, and the snippet above is an illustration of the seam rather than a recommendation. A fingerprinter that returns equal values for genuinely different content makes the ledger suppress a real change — staleness, which is the one failure this primitive exists to prevent, and the reason hashing content is the default. See [ADR-0002](docs/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for the measured collision rate that ruled it out as a shipped default.
 
 ### loadProjectConfig / isMcpError
 

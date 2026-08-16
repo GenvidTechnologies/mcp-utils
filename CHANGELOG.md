@@ -11,6 +11,50 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Changed
+
+- **`OptimisticWatcher` now bumps `txId` once per logical change, not once per watcher
+  event.** Some filesystems deliver more than one raw `fs.watch` event for a single
+  write — measured consistently on Windows/NTFS — so `txId` counted events rather than
+  changes.
+
+  **This changes output for existing consumers.** Measured against the real `fs.watch`
+  factory, before and after, 4/4 runs each:
+
+  | Scenario | Before | After |
+  |---|---|---|
+  | external create | `txId` +2 | +1 |
+  | `expect()`-ed self write | +1 | **+0** |
+  | external overwrite | +2 | +1 |
+  | four distinct external writes | +8 | +4 |
+
+  Detection is not weakened — only duplicates collapse. Four genuinely distinct writes
+  still produce four bumps, and a deletion still bumps. The one case that no longer
+  bumps is an external writer restoring byte-identical content, which is benign: a
+  consumer re-reading gets exactly what it already believes it holds.
+
+  If you counted `txId` deltas as an event-count proxy rather than a change-count proxy,
+  that count roughly halves. Pass `observed: null` to restore the previous behavior. See
+  [ADR-0002](docs/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for
+  the rationale and the rejected alternatives.
+
+### Added
+
+- `ObservedState` and `contentFingerprint` (plus the `Fingerprinter` type): a bounded,
+  pluggable path → content-fingerprint ledger. `isChanged(path)` is check-and-record,
+  mirroring `ExpectedChanges.consume`'s check-and-remove. Exported standalone, and used
+  as `OptimisticWatcher`'s third suppression layer.
+- `OptimisticWatcherOptions.observed?: ObservedState | null` — omitted constructs a
+  default instance (the fix is on by default); `null` opts out. Additive and
+  non-breaking.
+
+### Fixed
+
+- `OptimisticWatcher` bumped `txId` twice for one external write and once for an
+  `expect()`-ed self write that should not have bumped at all, breaking the
+  optimistic-concurrency contract for consumers that replay a `txId` a mutate tool just
+  handed them. ([#12](https://github.com/GenvidTechnologies/mcp-utils/issues/12))
+
 ## [0.6.0] - 2026-08-10
 
 ### Changed
