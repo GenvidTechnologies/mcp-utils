@@ -10,6 +10,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Read [`docs/code-review-context.md`](docs/code-review-context.md) when planning a change, not only when reviewing one.** Its title names the reviewer, but it holds this repo's **definition of done** — the five artifacts a new or changed utility must land together (implementation, `src/index.ts` re-export, tests, `README.md`, the `CLAUDE.md` utility list) and the release-affecting checks, including whether `CHANGELOG.md`'s `[Unreleased]` section describes the change. Consulting it only at review time turns each of those into a late finding and an extra commit; that is exactly how #12's `[Unreleased]` entry was missed until the review gate. It also lists the deliberate choices here that *look* like defects, which is worth knowing before you "fix" one.
 
+## The wiki (`wiki/`, `raw/`)
+
+This repo maintains an **LLM-wiki** — a three-tier, markdown-only compounding-memory knowledge base, maintained through `/gvt-dev:maintain-wiki` (`ingest` / `query` / `lint`):
+
+- `raw/` — **immutable** captured sources. **Never edit a file here.** If a source changed, re-capture it as a *new* file (date- or revision-suffixed) and leave the prior capture in place; that immutability is what makes every wiki claim re-verifiable.
+- `wiki/` — the LLM-maintained pages, plus `index.md` (the wiki's own TOC, and the OKF bundle root) and `log.md` (append-only ingest history, newest date group first).
+- [`docs/wiki-schema.md`](docs/wiki-schema.md) — the maintenance rules that keep the first two in sync: page format (OKF v0.2 frontmatter), the create-vs-update lifecycle, and this project's `stale_after` rule.
+
+It holds knowledge that **generalizes past this package and has no other home** — cross-cutting practice notes, not a second copy of `README.md` or an ADR. Restating a doc that already exists here buys nothing and creates a drift liability; a new page has to earn its place against that bar. Conversely, a page already covering a topic gets **updated in place** — never a second thin page on the same subject.
+
+`wiki/` is not built, linted, typechecked, or published (it ships nowhere near `dist/`), so nothing mechanical will catch an error in it — see `wiki/failure-modes-that-report-success.md`, which is itself about that class of gap.
+
 ## Commands
 
 Uses **npm** (see `package-lock.json`). Node >= 22 is required.

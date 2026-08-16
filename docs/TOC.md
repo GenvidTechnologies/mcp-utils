@@ -18,6 +18,12 @@ This is a small, flat utility library — its primary docs live at the repo root
   the deliberate choices that only look like defects, and the release-affecting
   checks.
 
+## Knowledge Base
+
+- [`wiki-schema.md`](wiki-schema.md) — maintenance schema for the three-tier
+  LLM-wiki (`raw/` captures → `wiki/` pages → these rules): page format,
+  create-vs-update lifecycle, `raw/` immutability, and the decay policy.
+
 ## Decision Records
 
 - [`decisions/0001-walkfiles-returns-only-regular-files.md`](decisions/0001-walkfiles-returns-only-regular-files.md)
