@@ -22,6 +22,10 @@
     "triagedLabel": "triaged",
     "needsInfoLabel": "needs-info"
   },
+  "wiki": {
+    "wikiDir": "wiki",
+    "rawDir": "raw"
+  },
   "features": {},
   "paths": {}
 }
