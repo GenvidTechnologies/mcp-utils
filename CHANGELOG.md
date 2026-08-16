@@ -11,6 +11,8 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-16
+
 ### Changed
 
 - **`OptimisticWatcher` now bumps `txId` once per logical change, not once per watcher
@@ -97,5 +99,6 @@ This file starts at 0.6.0. For earlier versions see the
   `EISDIR`. Broken symlinks and symlink cycles were emitted the same way.
   ([#10](https://github.com/GenvidTechnologies/mcp-utils/issues/10))
 
-[Unreleased]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.5.1...v0.6.0
