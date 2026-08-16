@@ -53,9 +53,16 @@ Add a third suppression layer, `ObservedState` — a path → content-fingerprin
 compares the current fingerprint against the last recorded one, records the new
 fingerprint either way, and returns whether they differed. Two consecutive events over
 the same unchanged content therefore report change only once; a real change in between
-still reports change. L1 and L2 are untouched, and `ExpectedChanges` is unmodified —
-`ObservedState` sits alongside them as an additional gate before `bump()`, not a
-replacement for either.
+still reports change. `ExpectedChanges` is unmodified and neither existing layer's
+suppression logic changes — `ObservedState` sits alongside them as an additional gate
+before `bump()`, not a replacement for either.
+
+L1 and L2 do gain one line each: when either suppresses an event, it also `record()`s
+that path's fingerprint. This is load-bearing rather than incidental. Suppressing a
+self-write without recording it would leave the ledger holding whatever preceded the
+write, so the *duplicate* of that self-write would read as a genuine change at L3 and
+bump — which is the bug, relocated one layer down. Recording at the point of
+suppression is what seals a self-write as accounted for.
 
 The default fingerprint is a content hash, not `stat`-derived. A `size:mtimeMs`
 fingerprint was measured to collide 12/200 (6%) on distinct same-size back-to-back
