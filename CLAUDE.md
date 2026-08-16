@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `@genvidtech/mcp-utils` is a small TypeScript library of shared, dependency-light utilities for building MCP (Model Context Protocol) servers. It is published publicly on npm under the `@genvidtech` scope. Each utility is independent — there is no central runtime or framework, just a flat set of helpers re-exported from `src/index.ts`.
 
+**Read [`docs/code-review-context.md`](docs/code-review-context.md) when planning a change, not only when reviewing one.** Its title names the reviewer, but it holds this repo's **definition of done** — the five artifacts a new or changed utility must land together (implementation, `src/index.ts` re-export, tests, `README.md`, the `CLAUDE.md` utility list) and the release-affecting checks, including whether `CHANGELOG.md`'s `[Unreleased]` section describes the change. Consulting it only at review time turns each of those into a late finding and an extra commit; that is exactly how #12's `[Unreleased]` entry was missed until the review gate. It also lists the deliberate choices here that *look* like defects, which is worth knowing before you "fix" one.
+
 ## Commands
 
 Uses **npm** (see `package-lock.json`). Node >= 22 is required.
