@@ -54,7 +54,7 @@ Each utility is independent — import only what you need. Grouped here the same
 - [`paginatedContent`](#paginatedcontent) — paginated text as a `CallToolResult`
 - [`paginateText`](#paginatetext) — line-based pagination
 - [Tool annotation presets](#tool-annotation-presets) — `READ_ONLY`, `REGENERATE`, `MUTATE`, `NON_IDEMPOTENT_READ`
-- [`exposeDocs`](#exposedocs) — serve a package's `docs/*.md` and `README.md` as MCP resources
+- [`exposeDocs`](#exposedocs) — serve a package's Markdown docs (flat or nested) and `README.md` as MCP resources
 
 **Shared types**
 
@@ -390,29 +390,44 @@ server.tool("consume-event", schema, NON_IDEMPOTENT_READ, handler);
 
 ### exposeDocs
 
-Registers a consuming package's Markdown documentation as MCP resources, so a client can read the server's own docs. Takes the package directory and resolves `docs/` and `README.md` beneath it.
+Registers a consuming package's Markdown documentation as MCP resources, so a client can read the server's own docs. Takes the package directory and resolves the documentation directory and `README.md` beneath it.
 
 ```ts
 import { exposeDocs } from "@genvidtech/mcp-utils";
 
 // packageDir is your server package's root — the directory holding docs/ and README.md
 exposeDocs(server, packageDir);
+
+// Or point it at a nested documentation tree
+exposeDocs(server, packageDir, { docsDir: "wiki", recursive: true });
 ```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `docsDir` | `"docs"` | Directory holding the `*.md` files, resolved relative to `packageDir`. |
+| `recursive` | `false` | Descend subdirectories and expose nested documents under path-shaped names. |
 
 Two resources are registered:
 
 | Resource | URI | Serves |
 |---|---|---|
-| `docs` | `docs:///{name}` (templated) | `<packageDir>/docs/<name>.md` |
+| `docs` | `docs:///{+path}` (templated) | `<packageDir>/<docsDir>/<path>.md` |
 | `readme` | `docs:///readme` (static) | `<packageDir>/README.md` |
 
-Both are returned with `mimeType: "text/markdown"`. The `readme` resource is registered **only if `README.md` exists**; the templated `docs` resource is registered unconditionally, even when `docs/` is absent.
+Both are returned with `mimeType: "text/markdown"`. The `readme` resource is registered **only if `README.md` exists**; the templated `docs` resource is registered unconditionally, even when the documentation directory is absent.
+
+Names are the document's path beneath `docsDir`, always with forward slashes and without the `.md` extension — `wiki/reference/cli.md` is `docs:///reference/cli`. The template uses RFC 6570 reserved expansion (`{+path}`), which matches a name containing no separator just as well, so a flat layout addresses exactly as it did before: `docs/guide.md` remains `docs:///guide`.
 
 Behavior worth knowing before you rely on it:
 
-- **Names are completion-only, not listable.** The template sets `list: undefined`, so clients cannot enumerate the available docs. Discovery happens through argument completion, which returns every `.md` basename found in `docs/`.
-- **The name list is a snapshot.** `docs/` is read once, when `exposeDocs` is called. Files added afterwards are served correctly if requested by name, but won't appear in completions until the server restarts.
-- **An unknown name throws.** The handler reads the resolved path directly, so requesting a `{name}` with no matching file surfaces the underlying `ENOENT` rather than an empty result.
+- **`recursive` governs what is served, not just what is listed.** With it off, a nested name is refused rather than quietly served, so the exposed set matches the advertised one.
+- **The name list is a snapshot.** The directory is walked once, when `exposeDocs` is called. Files added afterwards are still served correctly if requested by name, but won't appear in listings or completions until the server restarts.
+- **The document set is enumerable.** The template supplies a `list` callback, so `resources/list` returns every discovered document alongside the static `docs:///readme`. Argument completion offers the same set.
+- **Only regular files are offered.** The scan runs through [`walkFiles`](#walkfiles), so symlinked directories aren't followed, cycles terminate, and a *directory* named `guide.md` is never mistaken for a document.
+- **`README.md` owns `docs:///readme`.** If your documentation directory also contains a `readme.md`, it is shadowed — the SDK resolves a statically-registered resource before any template — so it is omitted from listings and completions rather than advertised under a URI that reads back as the root `README.md`. With no `README.md` present, `<docsDir>/readme.md` is exposed normally.
+- **An unresolvable name raises `McpError(InvalidParams)`.** Both a name with no matching file and one that escapes the documentation directory surface as a well-formed protocol error, matching what the SDK itself raises for a resource it cannot resolve — not a raw `ENOENT` carrying an absolute host path.
+
+The read handler passes each name through [`resolveWithin`](#resolvewithin) before opening it. This is defence in depth rather than a fix for a reachable escape: the SDK normalises the requested URI through `new URL()` before matching, which collapses `..` segments, so a traversal is already contained by the time the template sees it. The guard means containment doesn't *depend* on that normalisation. See [ADR-0003](docs/decisions/0003-exposedocs-path-shaped-resource-names.md).
 
 ### OptimisticWatcher
 

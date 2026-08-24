@@ -18,4 +18,4 @@ and maintenance rules.
 
 ## Practices
 
-* [Failure modes that report success](failure-modes-that-report-success.md) - Six ways a check on this stack passes without having checked — and the evidence rule that catches them.
+* [Failure modes that report success](failure-modes-that-report-success.md) - Seven ways a check on this stack passes without having checked — and the evidence rule that catches them.
