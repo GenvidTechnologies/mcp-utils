@@ -128,6 +128,36 @@ automated gate before being caught by hand:
 - The ADR said "L1 and L2 are untouched" one commit before both gained a
   `record()` call — and those calls are load-bearing, not incidental.
 
+A fourth, from the #15 branch, is a **different species and the rule above does
+not catch it**. The three instances above are prose contradicting its source
+data, so "diff every rendered claim against the source data" finds them. Here
+the data was correct and the *scope* of the inference was not:
+
+- ADR-0003 asserted that widening the resource template to `docs:///{+path}`
+  opened a path-traversal hole, and justified a read guard by it. The
+  measurement behind it was real and reproducible —
+  `UriTemplate("docs:///{+path}").match("docs:///../../../etc/passwd")` does
+  return the escaping path, where the old template returned `null`. But the SDK
+  builds `new URL(request.params.uri)` and matches against the **normalised**
+  form, so RFC 3986 collapses the `..` segments before the template is ever
+  consulted. No caller can deliver that string. The probe answered a question
+  the integrated system never asks, and every rendered claim traced faithfully
+  back to it. An end-to-end test through a real in-memory client is what
+  contradicted it.
+
+The generalisation worth carrying: **a component probed in isolation can answer
+a question the running system never poses, and the isolated answer is the more
+precise-looking of the two.** Probing the shipped `dist` rather than the docs —
+already the rule here — is not sufficient on its own, because the entry point
+you probe is itself a choice. Before a measurement justifies a design, confirm
+what the *caller* hands the component: an input transformed on the way in
+(normalised, decoded, defaulted, coerced) makes an isolated probe measure a
+case that cannot occur.
+
+- [ ] A measurement justifying a design was taken against the path the system
+      actually takes, not a component reached directly. Where the two differ,
+      the shipped text says which was measured.
+
 - [ ] Every measured figure in shipped text traces to data produced this
       change, not transcribed from the issue that proposed it. An issue's
       numbers may not reproduce — see the corrections table on

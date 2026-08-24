@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Six ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Seven ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
-stale_after: 2027-02-16
-generated: { by: process:maintain-wiki, at: 2026-08-16T14:31:07Z }
+stale_after: 2027-02-24
+generated: { by: process:maintain-wiki, at: 2026-08-24T00:00:00Z }
 sources:
+  - id: probe-scope
+    resource: ../raw/2026-08-24-isolated-probe-scope-error.md
+    title: Isolated-probe scope error, captured 2026-08-24 (session-local transcript plus re-fetchable SDK excerpts at @modelcontextprotocol/sdk@1.29.0)
+    last_modified: 2026-08-24
   - id: capture
     resource: ../raw/2026-08-16-verification-traps-excerpts.md
     title: Assembled verbatim excerpts, captured 2026-08-16
@@ -45,10 +49,12 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Six instances of this shape, drawn from this repo and its operating
-environment, follow.
+Seven instances of this shape, drawn from this repo and its operating
+environment, follow. The seventh differs from the rest in an important way,
+and is placed last for that reason: the first six are checks that did not
+run, while the seventh ran correctly and measured the wrong thing.
 
-## The six instances
+## The seven instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -139,10 +145,12 @@ repo-rename redirects. GitHub Actions' `uses:` resolution does **not**. A
 stale `uses:` reference therefore passes every API-based check yet fails the
 actual workflow run instantly, with a 0-second "workflow file issue."[^claude-md][^review-ctx]
 
-This is the most instructive instance of the six, because the verification
-tool and the consuming tool actively **disagree** — checking harder with the
-wrong tool (`gh api`) increases confidence while the defect stays exactly
-where it was.
+This is the most instructive instance of the first six, because the
+verification tool and the consuming tool actively **disagree** — checking
+harder with the wrong tool (`gh api`) increases confidence while the defect
+stays exactly where it was. Instance 7 below is the same shape reached from a
+different direction: there the disagreement is between the entry point probed
+and the one the system calls.
 
 **Concrete instance:** this bit the project migrating to the `@genvidtech`
 scope — issue `#9` left `ci.yml`/`publish.yml` pointing at the old,
@@ -211,9 +219,65 @@ stated quantity is a coincidence, not a verification, and it won't recur on
 the next file; the honest re-measure is `grep -o '\[\^[a-z0-9-]*\]' | wc -l`
 minus the definition-line count.[^selfreport]
 
+### 7. A probe runs correctly against an entry point the system never uses
+
+**Appears to do:** settle a factual question about a dependency by running it,
+rather than trusting a docstring — the countermeasure instance 3 prescribes.
+
+**Actually does:** answers a question the integrated system never poses. On the
+`#15` branch, the decision to widen `exposeDocs`' resource template to
+`docs:///{+path}` was accompanied by a probe of the MCP SDK's `UriTemplate`,
+showing the widened template matches a traversal where the old one returned
+`null`:[^probe-scope]
+
+```
+docs:///{name}     docs:///../../../etc/passwd  -> null
+docs:///{+path}    docs:///../../../etc/passwd  -> {"path":"../../../etc/passwd"}
+```
+
+Both lines are accurate and reproducible. An ADR was written concluding that
+the change opened a path-traversal hole, and a containment guard was justified
+by it. But the SDK's read handler does not hand the template the requested URI
+— it builds `new URL(request.params.uri)` and matches against `uri.toString()`
+(`dist/esm/server/mcp.js:376-390`), and RFC 3986 normalisation collapses `..`
+segments during URL construction. Measured end to end through a real in-memory
+client, with a sentinel file placed outside the documentation
+directory:[^probe-scope]
+
+| Requested | Reaches the template as | Outcome |
+|---|---|---|
+| `docs:///../secret` | `docs:///secret` | not found, inside the docs dir |
+| `docs:///../../../etc/passwd` | `docs:///etc/passwd` | not found, inside the docs dir |
+
+The guard never fires. The sentinel is never returned. No caller can deliver
+the string the probe was given.
+
+**Why this one is different, and worth its own entry.** The other six are
+checks that *did not run* — a skipped test, a no-op heredoc, a gate that reads
+no prose. This one ran, and reported truthfully. The defect was in **which
+entry point it was pointed at**, which no amount of scrutinising its output
+would reveal. It also defeats instance 3's countermeasure exactly: *"diff every
+rendered claim against the source data"* passes cleanly here, because every
+claim in the ADR did trace faithfully back to the probe table. The rule
+verifies transcription, and the error was upstream of transcription.[^probe-scope]
+
+**Countermeasure:** before a measurement justifies a design, establish what the
+**caller** hands the component. An input transformed on the way in — normalised,
+decoded, defaulted, coerced — means an isolated probe is measuring a case that
+cannot occur. Where the isolated and integrated answers can differ, take the
+integrated one: drive the real path (here, a client over `InMemoryTransport`)
+and let it arbitrate.
+
+**Concrete tell:** the isolated result is the more *precise-looking* of the two
+— an exact template, an exact matched value — and precision reads as rigour.
+Ask what the value looks like at the boundary you actually care about, not at
+the boundary that was convenient to call. A useful phrasing: *if this component
+is only ever reached through one caller, then a probe that bypasses that caller
+is measuring a hypothetical.*
+
 ## The transferable rule
 
-All six instances converge on the same rule: **name the evidence, or report
+All seven instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -223,14 +287,26 @@ suppresses.
 Before trusting any check on this stack, ask: what would this check look like
 if it silently didn't run? If the answer is "indistinguishable from success,"
 that check is not evidence — it's a green pixel with a story attached, and the
-six instances above are what happens when the story goes unquestioned. The
+instances above are what happens when the story goes unquestioned. The
 same question applies to delegated work: what would this report look like if
 the work it describes silently wasn't done, or wasn't checked as claimed? A
 self-report is a check like any other, and it fails the same way — unless
 something re-derives its numbers from the artifact.
 
+That question is necessary and, on its own, not sufficient — instance 7 passes
+it. A probe pointed at the wrong entry point looks nothing like a check that
+didn't run: it ran, it reported accurately, and its output is reproducible on
+demand. So ask a second question of any measurement that justifies a decision:
+**what does this measure that the running system doesn't do?** Name the caller,
+and name what the caller does to the input before the measured component sees
+it. Where you cannot name the caller, you have measured a component, not a
+behaviour — and the design resting on it is resting on a hypothetical.
+
 [^capture]: Assembled verbatim excerpts on checks that report success while
     not checking, captured 2026-08-16.
+[^probe-scope]: Isolated-probe scope error, captured 2026-08-24 —
+    session-local transcript of the `#15` run, plus SDK excerpts re-fetchable
+    at `@modelcontextprotocol/sdk@1.29.0`.
 [^claude-md]: Project `CLAUDE.md` at commit `74c0c0f`.
 [^review-ctx]: `docs/code-review-context.md` at commit `74c0c0f`.
 [^adr-0001]: ADR-0001, "Compromise" section, at commit `74c0c0f`.

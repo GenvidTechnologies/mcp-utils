@@ -15,6 +15,17 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `docs/wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-08-24
+
+* **Update**: failure-modes-that-report-success.md — added a seventh
+  instance (a probe that ran correctly against an entry point the system
+  never uses: the MCP SDK normalises a resource URI through `new URL()`
+  before matching it against a resource template, so an isolated
+  `UriTemplate.match()` probe measured a case no caller can produce). It is
+  the first instance on the page where the check *did* run and reported
+  truthfully, which is why the closing rule gained a second question.
+  Driven by `raw/2026-08-24-isolated-probe-scope-error.md`.
+
 ## 2026-08-16
 
 * **Update**: failure-modes-that-report-success.md — added a sixth instance
