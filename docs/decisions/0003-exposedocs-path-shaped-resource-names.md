@@ -109,6 +109,23 @@ for a resource it cannot resolve. Note this is a *thrown* `McpError`, not this
 package's `mcpError` helper: that helper builds a `CallToolResult`, which is
 the **tool** error shape, and `ReadResourceResult` has no error channel at all.
 
+**`recursive` gates serving, not merely listing.** With it off, a nested name
+is refused rather than quietly served, so the set that is advertised and the
+set that is reachable are the same. The refusal checks the *shape* of the
+requested name rather than membership of the collected set, and that
+distinction is deliberate: the set is a snapshot taken at registration, and the
+README documents that a flat document added after registration is still served
+by name. Gating on membership would have silently retired that guarantee.
+
+**`README.md` wins `docs:///readme`, so a shadowed `<docsDir>/readme.md` is not
+advertised.** The SDK resolves an exact registered resource before consulting
+any template, so such a file was never readable — but it was also never
+*visible*, because the template enumerated nothing. Supplying a `list` callback
+made the collision observable: the document set would have offered a URI that
+reads back as the root `README.md`. It is dropped from the collected set, so
+completions do not offer it either, and only while a `README.md` actually
+exists to shadow it.
+
 **`walkFiles` carries its own guarantees over.** It returns only regular files,
 does not follow symlinked directories, terminates on symlink cycles, and yields
 `[]` for a missing directory — all behaviours [ADR-0001](0001-walkfiles-returns-only-regular-files.md)
