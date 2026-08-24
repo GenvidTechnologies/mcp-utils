@@ -1,3 +1,22 @@
+---
+type: reference
+title: Wiki Maintenance Schema
+description: Maintenance schema for the three-tier LLM-wiki (`raw/` captures → `wiki/` pages → these rules) — page format, create-vs-update lifecycle, `raw/` immutability, and the decay policy.
+tags: [wiki, okf, schema, maintenance]
+status: stable
+stale_after: 2027-02-24
+generated: { by: process:maintain-wiki, at: 2026-08-16T00:00:00Z }
+sources:
+  - id: okf-spec
+    resource: https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/3fcbb9f828c2f23d109c855ee403c3a4c81f3a96/okf/SPEC.md
+    title: Open Knowledge Format (OKF) v0.2, pinned at upstream commit 3fcbb9f
+    last_modified: 2026-08-16
+---
+
+<!-- `stale_after` is ~6 months, not a year: this page's claims are pinned to
+     OKF v0.2 at a specific upstream commit and to `/gvt-dev:maintain-wiki`'s
+     current behaviour, both of which move underneath it silently. -->
+
 # Wiki Maintenance Schema
 
 > Project conventions consumed by `/gvt-dev:maintain-wiki`. Copy this file to

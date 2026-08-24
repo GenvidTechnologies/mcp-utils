@@ -1,3 +1,18 @@
+---
+type: reference
+title: Code Review Context
+description: Project-specific context for reviewers (and `gvt-dev:code-reviewer`) — the invariants to review against, the deliberate choices that only look like defects, and the release-affecting checks.
+tags: [code-review, definition-of-done, release, conventions]
+status: stable
+stale_after: 2027-08-24
+generated: { by: human:ninoles, at: 2026-08-15T00:00:00Z }
+sources:
+  - id: repo-conventions
+    resource: https://github.com/GenvidTechnologies/mcp-utils/blob/main/CLAUDE.md
+    title: Project CLAUDE.md — the conventions this document reviews against
+    last_modified: 2026-08-24
+---
+
 # Code Review Context
 
 Project-specific context for `gvt-dev:code-reviewer` (and for humans reviewing a

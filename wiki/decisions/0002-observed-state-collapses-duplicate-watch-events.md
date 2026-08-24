@@ -1,3 +1,19 @@
+---
+type: decision-context
+title: 0002. ObservedState collapses duplicate watch events
+description: Why `OptimisticWatcher` gains a third, content-fingerprint suppression layer to collapse the duplicate `fs.watch` events measured per single write.
+tags: [optimisticwatcher, observedstate, fs-watch, decision]
+status: stable
+generated: { by: human:ninoles, at: 2026-08-16T00:00:00Z }
+sources:
+  - id: issue-12
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/12
+    title: "#12 — one logical change produces several txId bumps"
+    last_modified: 2026-08-15
+---
+
+<!-- `stale_after` deliberately omitted — see the note in 0001. -->
+
 # 0002. ObservedState collapses duplicate watch events
 
 - **Status:** accepted

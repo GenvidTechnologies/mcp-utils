@@ -1,3 +1,19 @@
+---
+type: decision-context
+title: 0003. exposeDocs addresses nested docs by path, guarded by resolveWithin
+description: Why `exposeDocs` addresses nested documents by path through a single `docs:///{+path}` template, and why that makes the `resolveWithin` read guard required rather than optional.
+tags: [exposedocs, mcp, resources, decision]
+status: stable
+generated: { by: human:ninoles, at: 2026-08-24T00:00:00Z }
+sources:
+  - id: issue-15
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/15
+    title: "#15 — exposeDocs: optional docs directory, recursive scan, enumerable list"
+    last_modified: 2026-08-24
+---
+
+<!-- `stale_after` deliberately omitted — see the note in 0001. -->
+
 # 0003. exposeDocs addresses nested docs by path, guarded by resolveWithin
 
 - **Status:** accepted

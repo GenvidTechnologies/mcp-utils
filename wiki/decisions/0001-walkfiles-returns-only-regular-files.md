@@ -1,3 +1,21 @@
+---
+type: decision-context
+title: 0001. walkFiles returns only regular files
+description: Why `walkFiles` guarantees every returned path is a regular file, and why a failed `stat` drops the entry instead of propagating.
+tags: [walkfiles, filesystem, symlinks, decision]
+status: stable
+generated: { by: human:ninoles, at: 2026-08-10T00:00:00Z }
+sources:
+  - id: issue-10
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/10
+    title: "#10 — walkFiles returns directory symlinks whose name matches"
+    last_modified: 2026-08-10
+---
+
+<!-- `stale_after` is deliberately omitted: an accepted ADR is a record of a
+     decision made at a point in time, not a claim that decays. Supersession is
+     modelled by `status`, not by a staleness date. -->
+
 # 0001. walkFiles returns only regular files
 
 - **Status:** accepted
