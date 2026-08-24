@@ -44,6 +44,12 @@ This file starts at 0.6.0. For earlier versions see the
   name surfaced a raw `ENOENT` — reaching the client as an internal error
   carrying an absolute host path. This matches what the MCP SDK itself raises
   for a resource it cannot resolve.
+- **`exposeDocs` no longer advertises a `<docsDir>/readme.md` that `README.md`
+  shadows.** The static `README.md` resource owns `docs:///readme`, and the SDK
+  resolves an exact resource before any template, so such a file was never
+  readable. It was invisible before because the template listed nothing; now
+  that it enumerates, listing it would have advertised a URI that reads back as
+  a different document. With no `README.md` present it is exposed normally.
 - **`exposeDocs`' flat scan now goes through `walkFiles`**, so it inherits that
   helper's regular-file guarantee. A *directory* named `guide.md` is no longer
   offered as a document; it was previously listed in completions and then failed

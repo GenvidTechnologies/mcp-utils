@@ -30,10 +30,19 @@ export interface ExposeDocsOptions {
  * is never offered as a document, where the previous flat `readdirSync` would
  * have listed it and then failed the read with `EISDIR`.
  */
-function collectDocNames(docsDir: string, recursive: boolean): string[] {
+function collectDocNames(
+  docsDir: string,
+  recursive: boolean,
+  hasReadme: boolean
+): string[] {
   const names = walkFiles(docsDir, ".md")
     .map((abs) => toPosixPath(path.relative(docsDir, abs)).slice(0, -".md".length))
-    .filter((name) => recursive || !name.includes("/"));
+    .filter((name) => recursive || !name.includes("/"))
+    // `docs:///readme` is already taken by the static README.md resource, and
+    // the SDK resolves an exact resource before any template — so a
+    // `<docsDir>/readme.md` is unreachable whenever README.md exists. Drop it
+    // rather than advertise a name that reads back as a different document.
+    .filter((name) => !(hasReadme && name === "readme"));
   names.sort();
   return names;
 }
@@ -65,7 +74,8 @@ export function exposeDocs(
   const docsDir = path.resolve(packageDir, docsDirName);
   const readmePath = path.resolve(packageDir, "README.md");
 
-  const docNames = collectDocNames(docsDir, recursive);
+  const hasReadme = fs.existsSync(readmePath);
+  const docNames = collectDocNames(docsDir, recursive, hasReadme);
 
   server.resource(
     "docs",
@@ -124,7 +134,7 @@ export function exposeDocs(
   );
 
   // Register static resource for README.md if it exists
-  if (fs.existsSync(readmePath)) {
+  if (hasReadme) {
     server.resource("readme", "docs:///readme", async (uri) => {
       const content = fs.readFileSync(readmePath, "utf-8");
       return {

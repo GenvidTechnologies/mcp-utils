@@ -239,3 +239,44 @@ describe("exposeDocs — document set and resource behaviour", () => {
     expect(uris.some((u) => u.includes("\\"))).to.equal(false);
   });
 });
+
+describe("exposeDocs — readme collision", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTempDir();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  async function listUris(): Promise<string[]> {
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    exposeDocs(server, tmpDir);
+    const client = new Client({ name: "test-client", version: "0.0.0" });
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    return (await client.listResources()).resources.map((r) => r.uri);
+  }
+
+  it("lists docs:///readme once when README.md and docs/readme.md both exist", async () => {
+    fs.writeFileSync(path.join(tmpDir, "README.md"), "# Root readme");
+    fs.mkdirSync(path.join(tmpDir, "docs"));
+    fs.writeFileSync(path.join(tmpDir, "docs", "readme.md"), "# Docs readme");
+
+    const uris = await listUris();
+    // The static README.md resource owns docs:///readme, and the SDK resolves an
+    // exact resource before any template — so listing the shadowed docs/readme.md
+    // would advertise a URI that reads back as a different document.
+    expect(uris.filter((u) => u === "docs:///readme")).to.have.lengthOf(1);
+  });
+
+  it("still exposes docs/readme.md when there is no README.md to shadow it", async () => {
+    fs.mkdirSync(path.join(tmpDir, "docs"));
+    fs.writeFileSync(path.join(tmpDir, "docs", "readme.md"), "# Docs readme");
+
+    const uris = await listUris();
+    expect(uris.filter((u) => u === "docs:///readme")).to.have.lengthOf(1);
+  });
+});
