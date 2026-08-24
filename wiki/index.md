@@ -8,14 +8,53 @@ okf_version: "0.2"
 
 # Wiki Index
 
-This is the wiki's table of contents — every page under `wiki/`, grouped under
-section headings, one line each. `/gvt-dev:maintain-wiki` keeps this list
-current: a new page is added here when it's created, and `lint` flags any page
-listed in **no** index — here, or in a subdirectory's own `index.md`. Each
-entry's description is the linked page's frontmatter `description`, so the
-index and the page can't drift. See `docs/wiki-schema.md` for the page format
-and maintenance rules.
+This is the wiki's table of contents and **this repo's only documentation
+index** — every page under `wiki/`, grouped under section headings, one line
+each. `/gvt-dev:maintain-wiki` keeps this list current: a new page is added
+here when it's created, and `lint` flags any page listed in **no** index —
+here, or in a subdirectory's own `index.md`. Each entry's description is the
+linked page's frontmatter `description`, so the index and the page can't
+drift. See [`wiki-schema.md`](wiki-schema.md) for the page format and
+maintenance rules.
+
+This package's primary user-facing docs live at the repo root and are not
+wiki pages:
+
+- `../README.md` — user-facing API documentation for every exported utility.
+  It ships in the npm tarball; the wiki does not.
+- `../CLAUDE.md` — project conventions, commands, and the per-utility overview
+  (the de-facto architecture/design reference for this package).
 
 ## Practices
 
+Cross-cutting notes that generalize past this package.
+
 * [Failure modes that report success](failure-modes-that-report-success.md) - Seven ways a check on this stack passes without having checked — and the evidence rule that catches them.
+
+## Process
+
+How work gets done here — see [`process/index.md`](process/index.md).
+
+* [Code Review Context](process/code-review-context.md) - Project-specific context for reviewers (and `gvt-dev:code-reviewer`) — the invariants to review against, the deliberate choices that only look like defects, and the release-affecting checks.
+
+## Knowledge Base
+
+* [Wiki Maintenance Schema](wiki-schema.md) - Maintenance schema for the three-tier LLM-wiki (`raw/` captures → `wiki/` pages → these rules) — page format, create-vs-update lifecycle, `raw/` immutability, and the decay policy.
+
+## Decision Records
+
+Architecture decisions — see [`decisions/index.md`](decisions/index.md).
+
+* [0001. walkFiles returns only regular files](decisions/0001-walkfiles-returns-only-regular-files.md) - Why `walkFiles` guarantees every returned path is a regular file, and why a failed `stat` drops the entry instead of propagating.
+* [0002. ObservedState collapses duplicate watch events](decisions/0002-observed-state-collapses-duplicate-watch-events.md) - Why `OptimisticWatcher` gains a third, content-fingerprint suppression layer to collapse the duplicate `fs.watch` events measured per single write.
+* [0003. exposeDocs addresses nested docs by path, guarded by resolveWithin](decisions/0003-exposedocs-path-shaped-resource-names.md) - Why `exposeDocs` addresses nested documents by path through a single `docs:///{+path}` template, and why that makes the `resolveWithin` read guard required rather than optional.
+
+<!--
+No architecture.md, design-patterns.md, or runbook.md: this package has no
+runtime/framework to document beyond README.md + CLAUDE.md. Add them here if
+that changes.
+
+(Carried over from the retired docs/TOC.md — it records a deliberate absence,
+which is exactly the kind of thing that gets re-proposed annually once nothing
+states it.)
+-->
