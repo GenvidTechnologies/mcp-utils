@@ -13,12 +13,41 @@ This file starts at 0.6.0. For earlier versions see the
 
 ### Added
 
+- **`exposeDocs` takes an options object: `docsDir` and `recursive`.** `docsDir`
+  (default `"docs"`) names the documentation directory relative to `packageDir`;
+  `recursive` (default `false`) descends subdirectories and exposes nested
+  documents under path-shaped, extension-less names — `wiki/reference/cli.md`
+  becomes `docs:///reference/cli`. Both default to the previous behavior.
+  Rationale and rejected alternatives:
+  [ADR-0003](docs/decisions/0003-exposedocs-path-shaped-resource-names.md).
 - **Documented `exposeDocs` in `README.md`.** It has been exported from
   `src/index.ts` since it shipped, but had no README section, so consumers had no
   way to discover it from the package page. No behavior change — documentation
   only.
 - **A grouped index at the top of README's `## Utilities` section**, covering all
   17 documented exports.
+
+### Changed
+
+- **`exposeDocs`' resource template is now `docs:///{+path}`, not
+  `docs:///{name}`.** This changes output for existing consumers, though no
+  existing URI changes: RFC 6570 reserved expansion also matches a name with no
+  separator, so `docs/guide.md` is still `docs:///guide`. What is new is that a
+  *nested* name matches at all — simple expansion returned `null` for one.
+- **`exposeDocs`' `docs` template now contributes entries to `resources/list`.**
+  It previously contributed none: the template set `list: undefined`, and the SDK
+  skips a template whose callback is absent, so only the static `docs:///readme`
+  was listed. Clients that enumerate resources will see the whole document set
+  where they previously saw one entry.
+- **`exposeDocs` raises `McpError(InvalidParams)` for a name it cannot serve.**
+  Previously the read handler opened the resolved path directly, so an unknown
+  name surfaced a raw `ENOENT` — reaching the client as an internal error
+  carrying an absolute host path. This matches what the MCP SDK itself raises
+  for a resource it cannot resolve.
+- **`exposeDocs`' flat scan now goes through `walkFiles`**, so it inherits that
+  helper's regular-file guarantee. A *directory* named `guide.md` is no longer
+  offered as a document; it was previously listed in completions and then failed
+  the read with `EISDIR`.
 
 ## [0.7.0] - 2026-08-16
 
