@@ -11,6 +11,28 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Changed
+
+- **`docs/` is retired; the wiki is this repo's only documentation tier.** The
+  three ADRs moved to `wiki/decisions/`, `code-review-context.md` to
+  `wiki/process/`, and `wiki-schema.md` to `wiki/wiki-schema.md`; `docs/TOC.md`
+  folded into `wiki/index.md` rather than moving, since both indexed the same
+  corpus. The rule governing what earns a wiki page changed with it, from
+  "generalizes past this package" to **"exactly one page owns a given fact"** —
+  the old bar would have rejected the ADRs it now hosts. Recorded in
+  [ADR-0004](wiki/decisions/0004-wiki-is-the-only-documentation-tier.md).
+
+  **No API change and no version bump.** `docs/` never shipped in the npm
+  tarball (`files` is `["dist","LICENSE","README.md"]`), and this package never
+  calls `exposeDocs` on itself, so consumers see nothing. The only `src/` edit
+  is one ADR path in a `walkFiles` docstring. `README.md`'s four ADR links now
+  point at `wiki/decisions/`; those do ship, and resolve against GitHub from
+  the package page.
+
+  Note for anyone reading `exposeDocs`' docs: its `docsDir` default is still
+  `"docs"`. This change retires *this repo's* `docs/` directory and says
+  nothing about the utility's default.
+
 ## [0.8.0] - 2026-08-24
 
 ### Added
