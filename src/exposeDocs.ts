@@ -83,6 +83,19 @@ export function exposeDocs(
     }),
     async (uri, { path: docPath }) => {
       const name = Array.isArray(docPath) ? docPath[0] : docPath;
+
+      // `recursive` governs what is *served*, not merely what is listed, so a
+      // nested name is refused outright when it is off. Deliberately a check on
+      // the name's shape rather than membership of the collected set: the set is
+      // a snapshot taken at registration, and a flat document added afterwards
+      // is still served by name (see the README's note on the snapshot).
+      if (!recursive && name.includes("/")) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Resource ${uri.href} is nested, but this server exposes ${docsDirName} non-recursively`
+        );
+      }
+
       const filePath = resolveWithin(docsDir, `${name}.md`);
       if (filePath === null) {
         throw new McpError(

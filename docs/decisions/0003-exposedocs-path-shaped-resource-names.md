@@ -67,16 +67,47 @@ matches `{+path}` and yields `{path: "cli"}` — the same document the old
 template served. The swap is backward-compatible, which is why it does not need
 a second template alongside it.
 
-**The guard is required, not optional.** The originating issue listed guarding
-the read handler as an optional nicety. Reserved expansion changes that: it
-matches `..` segments, so `docs:///../../../etc/passwd` resolves outside
-`packageDir` entirely. The old template was accidentally safe here — not by
-design, but because simple expansion could not match the `/` such a path needs.
-Widening the template therefore opens a path-traversal surface that did not
-previously exist, and `resolveWithin` — a lexical containment check already
-exported by this package — closes it. A read that escapes, and a read of a
-contained name that does not exist, both return a `CallToolResult` error rather
-than throwing.
+**The read guard is defence in depth, not a fix for a live hole — and the
+distinction is worth recording precisely, because the first version of this
+record got it wrong.**
+
+Read in isolation, the widened template does match a traversal:
+`UriTemplate("docs:///{+path}").match("docs:///../../../etc/passwd")` returns
+`{path: "../../../etc/passwd"}`, where the old `docs:///{name}` returned
+`null`. That measurement is real, and it is what the guard was originally
+justified by.
+
+It is also not reachable through `resources/read`, because it describes the
+template in isolation rather than the path the SDK actually takes. The handler
+builds `new URL(request.params.uri)` and matches against `uri.toString()`
+(`dist/esm/server/mcp.js:376-390`), and RFC 3986 normalisation collapses `..`
+segments during URL construction — so the template is never offered the raw
+string. Measured end to end through an in-memory client:
+
+| Requested | Reaches the template as | Outcome |
+|---|---|---|
+| `docs:///../secret` | `docs:///secret` | not found, inside `docsDir` |
+| `docs:///a/../../secret` | `docs:///secret` | not found, inside `docsDir` |
+| `docs:///../../../etc/passwd` | `docs:///etc/passwd` | not found, inside `docsDir` |
+| `docs:///..%2F..%2Fsecret` | unchanged (still encoded) | not found, inside `docsDir` |
+
+So widening the template does **not** open a traversal surface over the
+protocol, and `resolveWithin` never fires on any of these.
+
+The guard is kept anyway, and the reason is a boundary question rather than
+timidity: that normalisation is the SDK's behaviour, not part of `exposeDocs`'
+own contract. The read callback is a plain function that a consumer can invoke
+directly, and a future SDK that matched the raw URI, or a transport that did
+not round-trip through `URL`, would change the answer without anything here
+changing. A single lexical containment check — already exported by this
+package, no new dependency — is cheap enough that depending on someone else's
+normalisation for containment is the worse trade.
+
+A read that escapes and a read of a contained name that does not exist both
+raise `McpError(ErrorCode.InvalidParams)`, matching what the SDK itself raises
+for a resource it cannot resolve. Note this is a *thrown* `McpError`, not this
+package's `mcpError` helper: that helper builds a `CallToolResult`, which is
+the **tool** error shape, and `ReadResourceResult` has no error channel at all.
 
 **`walkFiles` carries its own guarantees over.** It returns only regular files,
 does not follow symlinked directories, terminates on symlink cycles, and yields
@@ -115,6 +146,26 @@ it buys is illusory: the single template is already backward-compatible.
 **Percent-decoding the matched path.** Not done. `{+path}` returns the raw
 matched value, so `docs:///..%2F..%2Fsecret` yields the literal
 `..%2F..%2Fsecret`, which resolves to a strange filename inside the docs
-directory and fails to open — harmless. Decoding it would turn that same input
-back into a traversal, so any future change that adds decoding must apply
-`resolveWithin` after decoding, not before.
+directory and fails to open — harmless, and measured as such in the table
+above. This is also the one input in that table which URL normalisation does
+**not** touch, since `%2F` is not a path separator until it is decoded. Any
+future change that adds decoding therefore has to apply `resolveWithin` *after*
+decoding, and would be the case where the guard stops being defence in depth
+and starts being load-bearing.
+
+## A note on how this record was corrected
+
+The first version of this ADR asserted that the widened template opened a live
+path-traversal hole, and justified the read guard by it. That claim came from
+probing `UriTemplate.match()` directly on a raw URI string. The probe result
+was accurate; the inference was not, because the SDK normalises the URI through
+`new URL()` before the template is consulted, so no caller can deliver that raw
+string. The error was corrected after an end-to-end test through a real
+in-memory client contradicted the isolated probe.
+
+It is recorded here rather than quietly edited out because the failure mode
+generalises: a component probed in isolation can answer a question the
+integrated system never asks, and the isolated result is the more precise-looking
+of the two. `docs/code-review-context.md` already asks that every measured
+figure in shipped text trace to data produced by the change itself — this is the
+same rule applied to a measurement's *scope* rather than its value.
