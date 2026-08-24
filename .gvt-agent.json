@@ -27,5 +27,12 @@
     "rawDir": "raw"
   },
   "features": {},
-  "paths": {}
+  "hygiene": {
+    "excludePaths": ["wiki/decisions/"]
+  },
+  "paths": {
+    "docs/TOC.md": "wiki/index.md",
+    "docs/decisions/": "wiki/decisions/",
+    "docs/wiki-schema.md": "wiki/wiki-schema.md"
+  }
 }
