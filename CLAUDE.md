@@ -10,17 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Read [`wiki/process/code-review-context.md`](wiki/process/code-review-context.md) when planning a change, not only when reviewing one.** Its title names the reviewer, but it holds this repo's **definition of done** — the five artifacts a new or changed utility must land together (implementation, `src/index.ts` re-export, tests, `README.md`, the `CLAUDE.md` utility list) and the release-affecting checks, including whether `CHANGELOG.md`'s `[Unreleased]` section describes the change. Consulting it only at review time turns each of those into a late finding and an extra commit; that is exactly how #12's `[Unreleased]` entry was missed until the review gate. It also lists the deliberate choices here that *look* like defects, which is worth knowing before you "fix" one.
 
-## The wiki (`wiki/`, `raw/`)
+## The wiki (`wiki/`, `raw/`) — this repo's only documentation tier
 
-This repo maintains an **LLM-wiki** — a three-tier, markdown-only compounding-memory knowledge base, maintained through `/gvt-dev:maintain-wiki` (`ingest` / `query` / `lint`):
+This repo maintains an **LLM-wiki** — a three-tier, markdown-only compounding-memory knowledge base, maintained through `/gvt-dev:maintain-wiki` (`ingest` / `query` / `lint`). Since #17 it is the **only** documentation tier: `docs/` was retired, and `wiki/` now holds the ADRs and process docs that used to live there. See [ADR-0004](wiki/decisions/0004-wiki-is-the-only-documentation-tier.md).
 
 - `raw/` — **immutable** captured sources. **Never edit a file here.** If a source changed, re-capture it as a *new* file (date- or revision-suffixed) and leave the prior capture in place; that immutability is what makes every wiki claim re-verifiable.
-- `wiki/` — the LLM-maintained pages, plus `index.md` (the wiki's own TOC, and the OKF bundle root) and `log.md` (append-only ingest history, newest date group first).
-- [`docs/wiki-schema.md`](docs/wiki-schema.md) — the maintenance rules that keep the first two in sync: page format (OKF v0.2 frontmatter), the create-vs-update lifecycle, and this project's `stale_after` rule.
+- `wiki/` — the LLM-maintained pages, plus `index.md` (the wiki's own TOC, the OKF bundle root, and this repo's documentation index) and `log.md` (append-only ingest history, newest date group first). `decisions/` holds the ADRs and `process/` the working conventions; each subdirectory carries its own `index.md`, which carries **no frontmatter**.
+- [`wiki/wiki-schema.md`](wiki/wiki-schema.md) — the maintenance rules that keep the first two in sync: page format (OKF v0.2 frontmatter), the create-vs-update lifecycle, and this project's `stale_after` rule.
 
-It holds knowledge that **generalizes past this package and has no other home** — cross-cutting practice notes, not a second copy of `README.md` or an ADR. Restating a doc that already exists here buys nothing and creates a drift liability; a new page has to earn its place against that bar. Conversely, a page already covering a topic gets **updated in place** — never a second thin page on the same subject.
+**The rule is that exactly one page owns a given fact.** A new page has to earn its place against that bar: if a fact already has a home, it gets **updated in place** there — never restated on a second page, and never a second thin page on the same subject. Two pages asserting the same thing is the drift liability; which tier they sit in is not.
+
+This replaces the previous bar, which asked whether knowledge *generalized past this package* and explicitly excluded "a second copy of `README.md` or an ADR". That test cannot survive `docs/` being retired — ADRs and process docs are package-specific by nature, and they now live here. The ownership rule is what preserves the property the old bar was actually protecting: it is what has kept `wiki/` from becoming a dumping ground, and dropping it without a replacement is how that happens.
 
 `wiki/` is not built, linted, typechecked, or published (it ships nowhere near `dist/`), so nothing mechanical will catch an error in it — see `wiki/failure-modes-that-report-success.md`, which is itself about that class of gap.
+
+**Route retro insights to the wiki tier regardless of what `/gvt-dev:run-retro` concludes.** It tests for a wiki by the presence of `docs/wiki-schema.md` — a hardcoded literal that no `.gvt-agent.json` `paths` override redirects — so with the schema at `wiki/wiki-schema.md` it will conclude "no wiki" and silently skip wiki routing. The same literal in `audit-conventions`' `practice-detect.mjs` is why the audit reports the Environment pillar as *partial adoption* rather than *adopted*; that section is advisory and never affects the exit code. Both clear when [gvt-dev#390](https://github.com/GenvidTechnologies/claude-code-plugin-gvt-dev/issues/390) lands — **delete this paragraph then**. It is blocked by gvt-dev#385, so treat it as a standing workaround rather than a temporary one.
 
 ## Commands
 
