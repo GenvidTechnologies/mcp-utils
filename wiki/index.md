@@ -48,6 +48,7 @@ Architecture decisions — see [`decisions/index.md`](decisions/index.md).
 * [0001. walkFiles returns only regular files](decisions/0001-walkfiles-returns-only-regular-files.md) - Why `walkFiles` guarantees every returned path is a regular file, and why a failed `stat` drops the entry instead of propagating.
 * [0002. ObservedState collapses duplicate watch events](decisions/0002-observed-state-collapses-duplicate-watch-events.md) - Why `OptimisticWatcher` gains a third, content-fingerprint suppression layer to collapse the duplicate `fs.watch` events measured per single write.
 * [0003. exposeDocs addresses nested docs by path, guarded by resolveWithin](decisions/0003-exposedocs-path-shaped-resource-names.md) - Why `exposeDocs` addresses nested documents by path through a single `docs:///{+path}` template, and why that makes the `resolveWithin` read guard required rather than optional.
+* [0004. The wiki is this repo's only documentation tier](decisions/0004-wiki-is-the-only-documentation-tier.md) - Why `docs/` was retired into `wiki/`, what replaced the wiki's scope bar, and the two hardcoded plugin literals that relocation knowingly breaks.
 
 <!--
 No architecture.md, design-patterns.md, or runbook.md: this package has no
