@@ -111,9 +111,20 @@ prune the block as redundant should read this paragraph first.
   excludes `docs/decisions/` on the grounds that an ADR legitimately names
   retired things; move the ADRs and that exclusion silently stops matching. The
   list is unioned with the defaults, so naming only the addition is correct.
-- Out-of-bundle links improved rather than regressed: the schema previously
-  cited `../docs/wiki-schema.md` and `../docs/decisions/0001-*.md` as its
-  examples of links escaping the OKF bundle. Both are now inside it.
+- **The wiki gained two out-of-bundle links, measured 0 → 2.**
+  `wiki/process/code-review-context.md` points at `../../CLAUDE.md` and
+  `../../README.md`; those were ordinary in-repo links while the file sat in
+  `docs/`, and became bundle-escaping the moment it moved inside `wiki/`. Per
+  §6.1 they remain legal but are unresolvable to a consumer receiving only the
+  bundle — so this is the "deliberate, documented trade-off for the rare page
+  that genuinely needs to point outside" the schema describes. That page is
+  exactly such a case: it exists to defer to those two files rather than
+  duplicate them, which is the one-page-owns-a-fact rule doing its job.
+  Separately, the schema's *illustrative* examples of bundle-escaping links
+  cited `../docs/wiki-schema.md` and `../docs/decisions/0001-*.md`, both now
+  inside the bundle; they were reworded to name files that still escape. Those
+  were code-spans, never live links, so they never counted toward the figure
+  above.
 - `README.md` still ships in the tarball and still carries the four ADR links,
   now pointing at `wiki/decisions/`. Those resolve against GitHub from the
   published package page, so they have external blast radius.
