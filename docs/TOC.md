@@ -32,6 +32,10 @@ This is a small, flat utility library — its primary docs live at the repo root
 - [`decisions/0002-observed-state-collapses-duplicate-watch-events.md`](decisions/0002-observed-state-collapses-duplicate-watch-events.md)
   — why `OptimisticWatcher` gains a third, content-fingerprint suppression layer to
   collapse the duplicate `fs.watch` events measured per single write.
+- [`decisions/0003-exposedocs-path-shaped-resource-names.md`](decisions/0003-exposedocs-path-shaped-resource-names.md)
+  — why `exposeDocs` addresses nested documents by path through a single
+  `docs:///{+path}` template, and why that makes the `resolveWithin` read guard
+  required rather than optional.
 
 <!--
 No docs/architecture.md, design-patterns.md, or runbook.md: this package has no
