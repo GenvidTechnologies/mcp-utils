@@ -19,8 +19,9 @@ sources:
 
 # Wiki Maintenance Schema
 
-> Project conventions consumed by `/gvt-dev:maintain-wiki`. Copy this file to
-> `docs/wiki-schema.md` and edit it for your project. This is the **maintenance
+> Project conventions consumed by `/gvt-dev:maintain-wiki`. This repo keeps it
+> at `wiki/wiki-schema.md`, inside the bundle, rather than the plugin's default
+> `docs/wiki-schema.md` — see ADR-0004. This is the **maintenance
 > schema** for the three-tier wiki: `raw/` (immutable captured sources) →
 > `<wikiDir>/` (LLM-maintained pages, `index.md`, `log.md`) → this schema (the rules
 > that govern how the first two are kept in sync).
@@ -188,7 +189,7 @@ Choose `stale_after` by the topic's own volatility, not a fixed default:
   is the worked example (Node 24.11.1, npm 11.x, Actions redirect resolution),
   set to `2027-02-16`.
 - A page about **this package's own settled design** — a utility's contract, a
-  decision already recorded in `docs/decisions/` — gets **a year**, or omits
+  decision already recorded in `wiki/decisions/` — gets **a year**, or omits
   `stale_after` entirely. The ADR is the thing that would change first, and it
   is version-controlled and reviewed; the wiki page inherits that stability.
 - When a page mixes both, take the **shorter** horizon. A single version-pinned
@@ -231,8 +232,8 @@ forms are legal (§6.1):
 - **Ordinary relative** — `./other-page.md` for a sibling page in the same
   directory, `../<subdir>/other-page.md` for a page in another subdirectory.
 
-A link that escapes the bundle root entirely — e.g. to `../docs/wiki-schema.md`
-or `../docs/decisions/0001-*.md` — remains legal per §6.1 as an ordinary
+A link that escapes the bundle root entirely — e.g. to `../README.md`,
+`../CLAUDE.md` or a `../raw/` capture — remains legal per §6.1 as an ordinary
 relative link, but it is **unresolvable to an external OKF consumer** that
 only receives the `<wikiDir>/` bundle on its own. Treat this as a deliberate,
 documented trade-off for the rare page that genuinely needs to point outside

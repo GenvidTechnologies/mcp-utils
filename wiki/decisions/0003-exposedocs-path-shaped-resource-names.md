@@ -199,6 +199,6 @@ in-memory client contradicted the isolated probe.
 It is recorded here rather than quietly edited out because the failure mode
 generalises: a component probed in isolation can answer a question the
 integrated system never asks, and the isolated result is the more precise-looking
-of the two. `docs/code-review-context.md` already asks that every measured
+of the two. `wiki/process/code-review-context.md` already asks that every measured
 figure in shipped text trace to data produced by the change itself — this is the
 same rule applied to a measurement's *scope* rather than its value.

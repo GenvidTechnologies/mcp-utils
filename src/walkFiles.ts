@@ -48,7 +48,7 @@ type StatSync = (p: string) => fs.Stats | undefined;
  * is not *provably* a regular file, so it is dropped rather than propagated:
  * failing to classify one leaf should not abort the walk, whereas failing to
  * enumerate a directory genuinely stops it. See
- * `docs/decisions/0001-walkfiles-returns-only-regular-files.md`.
+ * `wiki/decisions/0001-walkfiles-returns-only-regular-files.md`.
  */
 export function walkFiles(
   dir: string,
