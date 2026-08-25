@@ -17,6 +17,18 @@ the full maintenance schema.
 
 ## 2026-08-24
 
+* **Update**: failure-modes-that-report-success.md — added an eighth
+  instance (a reference inventory that enumerated the wrong direction:
+  #17's census counted references *to* `docs/` and was structurally unable
+  to return the five relative links that broke *inside* a file when it moved
+  a directory level, none of which contain the substring `docs/`). Like the
+  seventh it ran and reported truthfully — the seventh against the wrong
+  entry point, the eighth over the wrong corpus. Instance 3 also gained a
+  paragraph extending its countermeasure from a delegate's prose to one's
+  own, after an ADR bullet in the same branch inverted a measurement it
+  claimed to summarise (0 → 2 out-of-bundle links, asserted as an
+  improvement). Driven by `raw/2026-08-24-move-blind-sweep-inventory.md`.
+
 * **Update**: failure-modes-that-report-success.md — added a seventh
   instance (a probe that ran correctly against an entry point the system
   never uses: the MCP SDK normalises a resource URI through `new URL()`
