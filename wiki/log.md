@@ -12,10 +12,22 @@ means a new entry (and, if today isn't already the top group, a new
 insertion point moves from the bottom to the top, but prepending never
 touches a prior entry's text, so the append-only guarantee holds exactly as
 before. If a past entry itself needs correcting, add a new entry that says
-so; never edit or remove the old one in place. See `docs/wiki-schema.md` for
+so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
 ## 2026-08-24
+
+* **Update**: failure-modes-that-report-success.md — added an eighth
+  instance (a reference inventory that enumerated the wrong direction:
+  #17's census counted references *to* `docs/` and was structurally unable
+  to return the five relative links that broke *inside* a file when it moved
+  a directory level, none of which contain the substring `docs/`). Like the
+  seventh it ran and reported truthfully — the seventh against the wrong
+  entry point, the eighth over the wrong corpus. Instance 3 also gained a
+  paragraph extending its countermeasure from a delegate's prose to one's
+  own, after an ADR bullet in the same branch inverted a measurement it
+  claimed to summarise (0 → 2 out-of-bundle links, asserted as an
+  improvement). Driven by `raw/2026-08-24-move-blind-sweep-inventory.md`.
 
 * **Update**: failure-modes-that-report-success.md — added a seventh
   instance (a probe that ran correctly against an entry point the system

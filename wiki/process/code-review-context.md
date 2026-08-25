@@ -1,3 +1,18 @@
+---
+type: reference
+title: Code Review Context
+description: Project-specific context for reviewers (and `gvt-dev:code-reviewer`) — the invariants to review against, the deliberate choices that only look like defects, and the release-affecting checks.
+tags: [code-review, definition-of-done, release, conventions]
+status: stable
+stale_after: 2027-08-24
+generated: { by: human:ninoles, at: 2026-08-15T00:00:00Z }
+sources:
+  - id: repo-conventions
+    resource: https://github.com/GenvidTechnologies/mcp-utils/blob/main/CLAUDE.md
+    title: Project CLAUDE.md — the conventions this document reviews against
+    last_modified: 2026-08-24
+---
+
 # Code Review Context
 
 Project-specific context for `gvt-dev:code-reviewer` (and for humans reviewing a
@@ -6,10 +21,10 @@ codebase; this document layers in what is actually true of **this** package.
 
 Authoritative sources this doc points at rather than duplicates:
 
-- [`../CLAUDE.md`](../CLAUDE.md) — commands, release process, key conventions,
+- [`CLAUDE.md`](../../CLAUDE.md) — commands, release process, key conventions,
   and the per-utility overview. It is the de-facto architecture reference.
-- [`../README.md`](../README.md) — user-facing API documentation.
-- [`decisions/`](decisions/) — ADRs for non-trivial trade-offs.
+- [`README.md`](../../README.md) — user-facing API documentation.
+- [`decisions/`](../decisions/) — ADRs for non-trivial trade-offs.
 
 ## What this package is
 
@@ -175,11 +190,11 @@ concrete for this repo.
 |---|---|
 | `any` in `withMcpErrors`'s generic constraint; unused vars | `@typescript-eslint/no-explicit-any` and both unused-vars rules are **intentionally off** in `.eslintrc.cjs`. |
 | `console.log` / `console.debug` inside utilities | Diagnostic logging is expected; `test/setup.ts` silences both per test (warn/error stay live). |
-| `walkFiles` re-throws `readdir` errors but silently **drops** an entry whose `stat` fails | Deliberately asymmetric — `throwIfNoEntry: false` suppresses only `ENOENT` (a cycle throws `ELOOP`), and failing to classify one leaf shouldn't abort a walk. Rationale in [ADR-0001](decisions/0001-walkfiles-returns-only-regular-files.md). |
+| `walkFiles` re-throws `readdir` errors but silently **drops** an entry whose `stat` fails | Deliberately asymmetric — `throwIfNoEntry: false` suppresses only `ENOENT` (a cycle throws `ELOOP`), and failing to classify one leaf shouldn't abort a walk. Rationale in [ADR-0001](../decisions/0001-walkfiles-returns-only-regular-files.md). |
 | `resolveRootFolder` applies **no containment check** to `explicit`/`env` overrides | Intended: an explicit override is trusted. Only *discovery* is confined to `cwd`. |
 | `resolveWithin` never touches the filesystem, so it doesn't resolve symlinks | It is a **lexical** traversal guard by design. Don't ask it to `realpath`. |
 | `package.json` `main`/`types`/`exports` point at `dist/` with a bare `publishConfig` | The old `publishConfig` field-override trick was removed — npm 11.x no longer applies it and silently shipped source-pointing manifests. Don't restore it. |
-| No `docs/architecture.md`, `design-patterns.md`, or `coding-conventions.md` | Intentional for a flat utility library; `CLAUDE.md` + `README.md` cover those dimensions. See the comment at the foot of [`TOC.md`](TOC.md). |
+| No `architecture.md`, `design-patterns.md`, or `coding-conventions.md` | Intentional for a flat utility library; `CLAUDE.md` + `README.md` cover those dimensions. See the comment at the foot of [`wiki/index.md`](../index.md). |
 | A feature branch leaves `package.json` `version` and `package-lock.json` untouched, even when its ADR or commit body says "ships as X.Y.Z" | Correct. The bump is its own `chore(release): bump version to X.Y.Z` commit made with `npm version` at release time — that updates the manifest and **both** lockfile spots together, and the publish workflow's tag==version guard checks against it. Naming the target version in an ADR is a *version-choice* decision, not an instruction to bump in the feature PR. Flagging the missing bump as a blocker sends the branch outside the documented release flow. |
 
 ## Adding or changing a utility

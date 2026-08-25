@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Seven ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Eight ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
 stale_after: 2027-02-24
 generated: { by: process:maintain-wiki, at: 2026-08-24T00:00:00Z }
 sources:
+  - id: move-sweep
+    resource: ../raw/2026-08-24-move-blind-sweep-inventory.md
+    title: Reference-sweep inventory blind to references from a moved file, captured 2026-08-24 (session-local transcript of the #17 run; commands re-runnable against the named commits)
+    last_modified: 2026-08-24
   - id: probe-scope
     resource: ../raw/2026-08-24-isolated-probe-scope-error.md
     title: Isolated-probe scope error, captured 2026-08-24 (session-local transcript plus re-fetchable SDK excerpts at @modelcontextprotocol/sdk@1.29.0)
@@ -49,12 +53,13 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Seven instances of this shape, drawn from this repo and its operating
-environment, follow. The seventh differs from the rest in an important way,
-and is placed last for that reason: the first six are checks that did not
-run, while the seventh ran correctly and measured the wrong thing.
+Eight instances of this shape, drawn from this repo and its operating
+environment, follow. The last two differ from the rest in an important way,
+and are placed last for that reason: the first six are checks that did not
+run, while the seventh and eighth ran correctly and measured the wrong thing
+— the seventh at the wrong entry point, the eighth over the wrong corpus.
 
-## The seven instances
+## The eight instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -134,6 +139,20 @@ inverted one argues *for* the exact change it was written to prevent.[^review-ct
 **Countermeasure:** where a change is justified by measurements — a probe
 table, a benchmark, a platform matrix — diff every rendered claim against the
 source data before committing, rather than trusting that it once matched.[^review-ctx]
+
+**This reaches your own prose, not just a delegate's.** Instance 6 below covers
+a *subagent's* self-report, which is easy to treat as suspect precisely because
+someone else wrote it. Prose you authored yourself in the same session reads as
+already-verified and is not. On the `#17` branch an ADR bullet asserted
+"out-of-bundle links improved rather than regressed"; the measured count moved
+**0 → 2**, the opposite direction. Its supporting sentence was independently
+true — the schema's examples *had* moved inside the bundle — but those were
+code-spans, never live links, so a true statement was serving as evidence for a
+false one. Four adjacent claims in the same record were correct, and that is
+part of the mechanism: a correction pass that fixes several real defects
+manufactures confidence in the one claim it never re-measured. Caught only by
+re-running the count; lint, typecheck, 206 passing tests and build were green
+across every commit in between.[^move-sweep]
 
 ### 4. Actions `uses:` disagrees with the tool used to verify it
 
@@ -275,9 +294,59 @@ the boundary that was convenient to call. A useful phrasing: *if this component
 is only ever reached through one caller, then a probe that bypasses that caller
 is measuring a hypothetical.*
 
+### 8. A reference inventory enumerates the wrong direction
+
+**Appears to do:** scope a repo-wide rename exhaustively, by counting every
+occurrence of the moving path and classifying each one.
+
+**Actually does:** enumerates references *to* the moved thing, and is
+structurally incapable of returning references *from* it. On the `#17` branch,
+retiring `docs/` into `wiki/`, the issue's census counted `docs/` occurrences
+and split them migratable vs must-not-touch. After `git mv` of one file — a
+clean `R100`, zero content change — the audit reported five broken links the
+census had never listed:[^move-sweep]
+
+```
+wiki/process/code-review-context.md:24  broken link -> ../CLAUDE.md
+wiki/process/code-review-context.md:26  broken link -> ../README.md
+wiki/process/code-review-context.md:27  broken link -> decisions/
+wiki/process/code-review-context.md:193 broken link -> decisions/0001-...md
+wiki/process/code-review-context.md:197 broken link -> TOC.md
+```
+
+**Not one of those strings contains `docs/`.** They broke because the file
+descended a directory level, not because they named the retired directory. No
+amount of care running the census would surface them — the defect is in what
+the enumeration is *of*.
+
+The census was otherwise sound: all 24 sites it named were real and its 57
+must-not-touch classifications held. Its accuracy on the enumerated category is
+exactly what made the missing category invisible — a partial inventory that is
+correct as far as it goes reads as a complete one.
+
+**Why this is not instance 7.** That one ran against the wrong *entry point*;
+this one runs against the wrong *corpus*. Both survive instance 3's
+countermeasure — every claim traced faithfully to the census, because the
+census was internally consistent. And both survive the transferable rule's
+first question: this check emphatically did run.
+
+**Countermeasure:** a move has two blast radii, and a path search finds only
+one. Before trusting a rename inventory, ask what the moved file *points at*,
+not only what points at it — then let a resolver that doesn't care about
+strings arbitrate. Here `scanBrokenLinks` resolves against the filesystem, so
+it found all five regardless of their spelling. Prefer a tool that checks the
+property you care about (does this link resolve?) over one that checks a proxy
+for it (does this line contain the old path?).
+
+**Concrete tell:** the same census also mis-stated its own totals — 67 against
+a measured 81, ~40 must-not-touch against 57, because `grep -c` counts *lines*
+and multi-hit lines undercount. A count that is wrong in the direction of
+*fewer* is the cheap smell for an enumeration that is scoped too narrowly, and
+it is visible before any of the work begins.[^move-sweep]
+
 ## The transferable rule
 
-All seven instances converge on the same rule: **name the evidence, or report
+All eight instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -304,6 +373,9 @@ behaviour — and the design resting on it is resting on a hypothetical.
 
 [^capture]: Assembled verbatim excerpts on checks that report success while
     not checking, captured 2026-08-16.
+[^move-sweep]: Reference-sweep inventory blind to references *from* a moved
+    file, captured 2026-08-24 — session-local transcript of the `#17` run,
+    with commands re-runnable against the commits it names.
 [^probe-scope]: Isolated-probe scope error, captured 2026-08-24 —
     session-local transcript of the `#15` run, plus SDK excerpts re-fetchable
     at `@modelcontextprotocol/sdk@1.29.0`.

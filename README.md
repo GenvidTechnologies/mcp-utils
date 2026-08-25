@@ -164,7 +164,7 @@ Recursively walks a directory and returns the absolute paths of all files whose 
 | symlink → directory (incl. Windows junctions) | no |
 | broken symlink, symlink cycle, socket, device | no |
 
-Ordinary entries are classified from the directory listing alone; only the leftovers (symlinks and special entries) cost one resolving `stat`, and only when they already matched `match`. An entry whose `stat` fails for any reason is dropped rather than propagated — failing to classify one leaf doesn't abort the walk, whereas failing to enumerate a directory does. See [ADR-0001](docs/decisions/0001-walkfiles-returns-only-regular-files.md).
+Ordinary entries are classified from the directory listing alone; only the leftovers (symlinks and special entries) cost one resolving `stat`, and only when they already matched `match`. An entry whose `stat` fails for any reason is dropped rather than propagated — failing to classify one leaf doesn't abort the walk, whereas failing to enumerate a directory does. See [ADR-0001](wiki/decisions/0001-walkfiles-returns-only-regular-files.md).
 
 ```ts
 import { readFileSync } from "node:fs";
@@ -427,7 +427,7 @@ Behavior worth knowing before you rely on it:
 - **`README.md` owns `docs:///readme`.** If your documentation directory also contains a `readme.md`, it is shadowed — the SDK resolves a statically-registered resource before any template — so it is omitted from listings and completions rather than advertised under a URI that reads back as the root `README.md`. With no `README.md` present, `<docsDir>/readme.md` is exposed normally.
 - **An unresolvable name raises `McpError(InvalidParams)`.** Both a name with no matching file and one that escapes the documentation directory surface as a well-formed protocol error, matching what the SDK itself raises for a resource it cannot resolve — not a raw `ENOENT` carrying an absolute host path.
 
-The read handler passes each name through [`resolveWithin`](#resolvewithin) before opening it. This is defence in depth rather than a fix for a reachable escape: the SDK normalises the requested URI through `new URL()` before matching, which collapses `..` segments, so a traversal is already contained by the time the template sees it. The guard means containment doesn't *depend* on that normalisation. See [ADR-0003](docs/decisions/0003-exposedocs-path-shaped-resource-names.md).
+The read handler passes each name through [`resolveWithin`](#resolvewithin) before opening it. This is defence in depth rather than a fix for a reachable escape: the SDK normalises the requested URI through `new URL()` before matching, which collapses `..` segments, so a traversal is already contained by the time the template sees it. The guard means containment doesn't *depend* on that normalisation. See [ADR-0003](wiki/decisions/0003-exposedocs-path-shaped-resource-names.md).
 
 ### OptimisticWatcher
 
@@ -437,7 +437,7 @@ Watches one or more directories and classifies incoming change events as either 
 
 - **Layer 1 — synchronous suppress window.** Wrap a write in `suppress(fn)`. While `fn` is executing, every watcher event is silently dropped. The depth counter is always unwound in a `finally` block, so a throw inside `fn` leaves the watcher in a healthy state.
 - **Layer 2 — pre-registered path.** Call `expect(path)` before triggering a write. If the watcher event arrives after the suppress window has closed (an async race on fast filesystems), `ExpectedChanges.consume` still catches and drops it. Both `expect()` and the default watcher key on the **resolved absolute path**, so passing a relative write path (the same one handed to `fs.writeFile`) matches correctly.
-- **Layer 3 — content unchanged since last accounted for.** Some filesystems (observed on Windows) deliver more than one raw `fs.watch` event for a single logical write, so an external overwrite or a self-write can still reach `bump()` twice even after Layers 1 and 2. Layer 3 asks a question with no timing term: does this path's content actually differ from what was last recorded? A duplicate event over unchanged content is suppressed; a genuine change still bumps `txId`. It's backed by an `ObservedState` ledger — a fresh instance by default, or your own via the `observed` option — and Layers 1 and 2 feed it too (`record()` on every suppression), so a path they suppress is also sealed as accounted for. Pass `observed: null` to disable Layer 3 and restore pre-Layer-3 behavior (every non-suppressed event bumps `txId`). Layer 3 fails open: an evicted ledger entry, an unreadable file, or a throwing custom `Fingerprinter` all degrade toward an *extra* bump, never toward staleness. See [ADR-0002](docs/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for why content hashing is the default and what was rejected instead.
+- **Layer 3 — content unchanged since last accounted for.** Some filesystems (observed on Windows) deliver more than one raw `fs.watch` event for a single logical write, so an external overwrite or a self-write can still reach `bump()` twice even after Layers 1 and 2. Layer 3 asks a question with no timing term: does this path's content actually differ from what was last recorded? A duplicate event over unchanged content is suppressed; a genuine change still bumps `txId`. It's backed by an `ObservedState` ledger — a fresh instance by default, or your own via the `observed` option — and Layers 1 and 2 feed it too (`record()` on every suppression), so a path they suppress is also sealed as accounted for. Pass `observed: null` to disable Layer 3 and restore pre-Layer-3 behavior (every non-suppressed event bumps `txId`). Layer 3 fails open: an evicted ledger entry, an unreadable file, or a throwing custom `Fingerprinter` all degrade toward an *extra* bump, never toward staleness. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for why content hashing is the default and what was rejected instead.
 
 **Cancelled-write idiom**
 
@@ -516,7 +516,7 @@ const observed = new ObservedState({
 });
 ```
 
-There is no `stat`-based fingerprinter built in, and the snippet above is an illustration of the seam rather than a recommendation. A fingerprinter that returns equal values for genuinely different content makes the ledger suppress a real change — staleness, which is the one failure this primitive exists to prevent, and the reason hashing content is the default. See [ADR-0002](docs/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for the measured collision rate that ruled it out as a shipped default.
+There is no `stat`-based fingerprinter built in, and the snippet above is an illustration of the seam rather than a recommendation. A fingerprinter that returns equal values for genuinely different content makes the ledger suppress a real change — staleness, which is the one failure this primitive exists to prevent, and the reason hashing content is the default. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for the measured collision rate that ruled it out as a shipped default.
 
 ### loadProjectConfig / isMcpError
 
