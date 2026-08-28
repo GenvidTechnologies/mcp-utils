@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Eight ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Nine ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
 stale_after: 2027-02-24
 generated: { by: process:maintain-wiki, at: 2026-08-24T00:00:00Z }
 sources:
+  - id: source-absent
+    resource: ../raw/2026-08-28-source-absent-claim.md
+    title: A claim whose subject is absent from the source, captured 2026-08-28 (session-local transcript of the #19 run; the semver probe is re-runnable and the quoted commit is pinned by SHA)
+    last_modified: 2026-08-28
   - id: move-sweep
     resource: ../raw/2026-08-24-move-blind-sweep-inventory.md
     title: Reference-sweep inventory blind to references from a moved file, captured 2026-08-24 (session-local transcript of the #17 run; commands re-runnable against the named commits)
@@ -53,13 +57,15 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Eight instances of this shape, drawn from this repo and its operating
-environment, follow. The last two differ from the rest in an important way,
+Nine instances of this shape, drawn from this repo and its operating
+environment, follow. The last three differ from the rest in an important way,
 and are placed last for that reason: the first six are checks that did not
-run, while the seventh and eighth ran correctly and measured the wrong thing
-— the seventh at the wrong entry point, the eighth over the wrong corpus.
+run; the seventh and eighth ran correctly and measured the wrong thing — the
+seventh at the wrong entry point, the eighth over the wrong corpus; and the
+ninth ran correctly over the *right* corpus and still could not reach the
+claim, because the claim's subject was not in that corpus at all.
 
-## The eight instances
+## The nine instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -344,9 +350,63 @@ and multi-hit lines undercount. A count that is wrong in the direction of
 *fewer* is the cheap smell for an enumeration that is scoped too narrowly, and
 it is visible before any of the work begins.[^move-sweep]
 
+### 9. A claim whose subject is absent from the source
+
+**Appears to do:** exactly what instance 3 prescribes — diff every prose claim
+against the source data before committing — carried out diligently, by an agent
+that enumerates each claim it checked and against which file.
+
+**Actually does:** reaches only those claims whose subject is *in* the source. A
+claim about an **external system** — npm range resolution, a platform's
+filesystem semantics, a protocol's normalisation rules — has nothing in `src/`
+to diff against. So a conscientious "verified against source" pass sails
+straight past it while accurately reporting full coverage of everything it
+could see. Instance 3's countermeasure is not weakened here; it simply has no
+purchase, and its thoroughness is what makes the gap hard to notice.[^source-absent]
+
+**The instance.** Writing the `CHANGELOG.md` entry for the `#19` codec, a
+`tech-writer` subagent verified every checkable claim against `src/txToken.ts`
+and `test/txToken.test.ts`, listed them, and wrote:[^source-absent]
+
+> Both named consumers currently pin `^0.8.0`, so this lands within their
+> existing range
+
+`^0.8.0` resolves as `>=0.8.0 <0.9.0` — below a major of 1, npm's caret permits
+patch updates only — so the `0.9.0` release falls **outside** every range the
+entry named. The claim was the exact inverse of the truth, and lint, `tsc`, 250
+passing tests and a clean build were all green over it.[^source-absent]
+
+**The discriminating detail**, which is what earns this a place beside instance
+3 rather than inside it: the subagent **did** flag the inherited premise. Its
+report volunteered that "both waiting consumers currently pin `^0.8.0`" was
+"carried forward from the brief, not independently confirmed," having no way to
+inspect those repos from this checkout. The labelling worked. What it then wrote
+was not the premise but a **consequence drawn from it** — *so this lands within
+their existing range* — and that consequence is false whatever consumers pin.
+The label routed attention to the premise and away from the inference built on
+it.[^source-absent]
+
+**Countermeasure**, in two parts. A labelled-unverified claim is not a
+discharged one: the label names an obligation and does not satisfy it, and the
+obligation falls on whoever accepts the work, not on the agent that raised the
+flag. And check an **inference** separately from the premise it rests on — an
+inference can be false while its premise is true, so confirming the premise
+discharges nothing about what was concluded from it.
+
+**Concrete tell:** the correct rule was already settled in this repo one release
+earlier, by the same reasoning, in the body of commit `7423e48` — *"Consumers
+currently pin ^0.7.0, which excludes 0.8.0, so adoption downstream is deliberate
+work rather than a transparent pickup."* It lived **only** there. No reader of
+`CLAUDE.md`, `README.md`, or this wiki would meet it.[^source-absent] A fact
+whose sole home is a commit message is not documented, it is buried: `git log`
+is not a surface anyone consults before writing a release note, so the fact gets
+re-derived on every release — and re-derivation is where it goes wrong. If a
+rule was worth writing in a commit body, it belongs somewhere a future author
+will actually pass through.
+
 ## The transferable rule
 
-All eight instances converge on the same rule: **name the evidence, or report
+All nine instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -371,6 +431,18 @@ and name what the caller does to the input before the measured component sees
 it. Where you cannot name the caller, you have measured a component, not a
 behaviour — and the design resting on it is resting on a hypothetical.
 
+Two questions are still not enough, because instance 9 passes both. That check
+ran, reported accurately, and measured precisely what the running system does —
+it simply had nothing to say about a claim whose subject lives outside the
+repo. So ask a third question of any body of prose about to be committed:
+**which of these claims could this check not have reached?** Sort them by
+subject, not by confidence: a claim about the code is answerable from the code,
+and a claim about npm, the filesystem, a protocol, or another repository is not,
+no matter how firmly the surrounding paragraph is grounded. Then note that
+marking such a claim unverified is where the work starts rather than where it
+ends — the flag is a handoff, and an unclaimed handoff is indistinguishable from
+a check that passed.
+
 [^capture]: Assembled verbatim excerpts on checks that report success while
     not checking, captured 2026-08-16.
 [^move-sweep]: Reference-sweep inventory blind to references *from* a moved
@@ -387,3 +459,7 @@ behaviour — and the design resting on it is resting on a hypothetical.
 [^selfreport]: Subagent self-report vs. measured artifact, captured
     2026-08-16 (session-local transcript; no public upstream, cannot be
     re-fetched).
+[^source-absent]: A claim whose subject is absent from the source, captured
+    2026-08-28 — session-local transcript of the `#19` run. The `semver` probe
+    is re-runnable against this repo's resolved `semver`, and the commit it
+    quotes (`7423e48`) is pinned by SHA.

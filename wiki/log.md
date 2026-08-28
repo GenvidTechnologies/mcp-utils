@@ -15,6 +15,27 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-08-28
+
+* **Update**: failure-modes-that-report-success.md — added a ninth instance
+  (a claim whose subject is absent from the source, so instance 3's
+  "diff the prose against the source data" has nothing to diff against).
+  During #19 a `tech-writer` verified every checkable claim against
+  `src/txToken.ts`, correctly flagged the one premise it could not confirm
+  from this checkout — that both consumers pin `^0.8.0` — and then wrote a
+  *consequence* of that premise, "so this lands within their existing
+  range", which is false however consumers pin: `^0.8.0` is `>=0.8.0
+  <0.9.0`, because below a major of 1 npm's caret permits patch updates
+  only. Distinct from instances 7 and 8 in that the check ran over the
+  *right* corpus and still could not reach the claim; distinct from 6 in
+  that the self-report was honest. The transferable rule gained a third
+  question — *which of these claims could this check not have reached?* —
+  and the countermeasure that a labelled-unverified claim is a handoff, not
+  a discharge. Tell worth its own note: the correct rule was already settled
+  one release earlier and recorded **only** in commit `7423e48`'s body,
+  where no future release-note author would pass through it. Driven by
+  `raw/2026-08-28-source-absent-claim.md`.
+
 ## 2026-08-24
 
 * **Update**: failure-modes-that-report-success.md — added an eighth
