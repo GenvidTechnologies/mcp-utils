@@ -35,6 +35,7 @@ Each utility is independent — import only what you need. Grouped here the same
 - [`ExpectedChanges`](#expectedchanges) — suppress self-triggered file-watcher events
 - [`OptimisticWatcher`](#optimisticwatcher) — classify watch events as self-writes vs. external
 - [`ObservedState`](#observedstate) — bounded path → content-fingerprint ledger
+- [`TxToken`](#txtoken) — encode/decode/compare a project-scoped transaction counter for the wire
 
 **Filesystem & path**
 
@@ -517,6 +518,37 @@ const observed = new ObservedState({
 ```
 
 There is no `stat`-based fingerprinter built in, and the snippet above is an illustration of the seam rather than a recommendation. A fingerprinter that returns equal values for genuinely different content makes the ledger suppress a real change — staleness, which is the one failure this primitive exists to prevent, and the reason hashing content is the default. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for the measured collision rate that ruled it out as a shipped default.
+
+### TxToken
+
+A wire codec for a project-scoped transaction counter: `${projectId}:${n}`. This is the on-the-wire encoding of the same counter `OptimisticWatcher` tracks as `txId` (above) — five exports, all in `txToken.ts`, with zero imports.
+
+```ts
+import {
+  isValidProjectId, formatTxToken, parseTxToken, compareTxToken,
+} from "@genvidtech/mcp-utils";
+import type { TxToken } from "@genvidtech/mcp-utils";
+```
+
+- `formatTxToken(projectId, n)` — mints a token. **Throws `TypeError`** if `projectId` fails `isValidProjectId` or `n` is not a non-negative safe integer (`Number.isSafeInteger`). This is the module's one deliberate exception to the package's never-throw contract: the input comes from the server's own construction path, not off the wire, so failing loudly here is correct.
+- `parseTxToken(token)` — parses a client-supplied token. **Total**: returns `{ projectId: string; n: number } | null` and never throws, even for non-string input. `n` must be in strict canonical decimal shape — no leading zeros, sign, whitespace, exponent notation, or hex — and a safe integer; a shape-valid but overlarge digit string (e.g. `"alpha:9007199254740993"`) also parses to `null` rather than coercing lossily.
+- `compareTxToken(token, projectId, currentN)` — parses `token` and reports whether both `projectId` and `n` match. Always a `boolean` (`false` for a malformed token), never `null`/`undefined`.
+- `isValidProjectId(id)` — `true` iff `id` is non-empty and contains no `:` and no whitespace; the same shape `formatTxToken` requires of a token's left half.
+
+For any token that parses, `formatTxToken(parsed.projectId, parsed.n) === token` (round-trip invariant).
+
+```ts
+formatTxToken("alpha", 3);              // "alpha:3"
+parseTxToken("alpha:3");                // { projectId: "alpha", n: 3 }
+parseTxToken("alpha:03");               // null — leading zero is rejected
+parseTxToken("not-a-token");            // null — no delimiter
+compareTxToken("alpha:3", "alpha", 3);  // true
+compareTxToken("alpha:3", "alpha", 4);  // false
+```
+
+**Upper bound: `Number.MAX_SAFE_INTEGER` (2^53 − 1).** An `n` beyond it is rejected outright — `formatTxToken` throws, `parseTxToken` returns `null` — never silently truncated.
+
+The `:` delimiter and the canonical shape of `n` are a wire contract shared with two named consumers, `GenvidTechnologies/c3-domain-manager` and `GenvidTechnologies/construct3-chef`, not an implementation detail. See [ADR-0005](wiki/decisions/0005-tx-token-wire-format.md).
 
 ### loadProjectConfig / isMcpError
 
