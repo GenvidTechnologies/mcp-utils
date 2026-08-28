@@ -11,6 +11,36 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **`txToken`: `isValidProjectId`, `formatTxToken`, `parseTxToken`, `compareTxToken` — a
+  wire-format codec for `OptimisticWatcher`'s `txId`.** A `TxToken` is a plain string
+  shaped `` `${projectId}:${n}` ``. This exists because `txId` itself is a plain
+  `number` a watcher holds in memory; nothing in this package previously gave a
+  consumer a canonical way to put one on the wire (e.g. as an MCP tool argument) and
+  get it back safely. Two consumers depend on this exact shape —
+  `GenvidTechnologies/c3-domain-manager#77` and
+  `GenvidTechnologies/construct3-chef#95` —
+  so the delimiter and the number encoding are a fixed contract, not an incidental
+  string format. `formatTxToken` throws `TypeError` on an invalid `projectId`, or on
+  an `n` that is not a non-negative safe integer; this is the one deliberate
+  exception to the
+  never-throw convention documented in `CLAUDE.md`'s Key Conventions, because its
+  input is the server's own construction path, not off the wire. `parseTxToken` and
+  `compareTxToken` are total — they never throw, returning `null` / `false` for any
+  malformed input including non-string input — because their input *is* off the
+  wire. The numeric half is strictly canonical: leading zeros, signs, whitespace,
+  exponent notation, and hex are all rejected, and a digit string whose value
+  exceeds `Number.MAX_SAFE_INTEGER` is **rejected** rather than silently coerced to
+  a lossy one. Rationale and rejected alternatives:
+  [ADR-0005](wiki/decisions/0005-tx-token-wire-format.md).
+
+  **Shipping as a minor bump, not a patch.** These are new exports; nothing existing
+  was removed or renamed. Note that `^0.8.0` — the range both named consumers pin
+  today — **excludes** 0.9.0: below 1.0.0 a caret permits patch updates only. So
+  picking this up downstream is deliberate work rather than a transparent bump,
+  exactly as 0.8.0 was for consumers pinning `^0.7.0`.
+
 ### Changed
 
 - **`docs/` is retired; the wiki is this repo's only documentation tier.** The
