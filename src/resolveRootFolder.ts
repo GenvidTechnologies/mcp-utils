@@ -7,7 +7,7 @@ import { mcpError } from "./mcpError.js";
 type ReaddirSync = (dir: string, opts: { withFileTypes: true }) => fs.Dirent[];
 
 /**
- * Options for {@link resolveRootFolder}.
+ * Options for {@link resolveRootFolder} and {@link resolveRootFolders}.
  */
 export interface ResolveRootFolderOpts {
   /**
@@ -30,7 +30,7 @@ export interface ResolveRootFolderOpts {
    * E.g. `"project.c3proj"` or `".git"`.
    * Matched by entry name regardless of whether it is a file or directory.
    * Required and must be non-whitespace — otherwise {@link resolveRootFolder}
-   * returns an `mcpError`.
+   * / {@link resolveRootFolders} return an `mcpError`.
    */
   marker: string;
 
@@ -67,24 +67,57 @@ export interface ResolvedRoot {
 }
 
 /**
- * Resolves the project root directory using a four-level precedence chain:
+ * The resolved project root candidates returned by {@link resolveRootFolders}
+ * on success.
+ */
+export interface ResolvedRoots {
+  /**
+   * Absolute paths to the resolved project root candidate(s). Always
+   * non-empty. More than one entry occurs only for `source: "discovery"`,
+   * when the marker was found in two or more sibling directories.
+   */
+  paths: string[];
+
+  /**
+   * How the candidates were determined:
+   * - `"explicit"` — the caller's `opts.explicit` value was used.
+   * - `"env"` — the named environment variable was used.
+   * - `"discovery"` — one or more directories containing the marker were found.
+   * - `"cwd"` — fallback: no marker found, `cwd` is returned as-is.
+   *   Consumers typically warn when they receive this source.
+   */
+  source: "explicit" | "env" | "discovery" | "cwd";
+}
+
+/** Narrows a resolveRootFolders result to its `CallToolResult` error case. */
+function isErrorResult(result: ResolvedRoots | CallToolResult): result is CallToolResult {
+  return (result as CallToolResult).isError === true;
+}
+
+/**
+ * Resolves the project root candidate(s) using a four-level precedence chain:
  * `explicit` > `env` > `discovery` > `cwd`.
  *
+ * This is the plural counterpart of {@link resolveRootFolder}: identical
+ * precedence and discovery behaviour, but ambiguous discovery (two or more
+ * directories containing the marker) is a **success** carrying every
+ * candidate, rather than an error. `resolveRootFolder` is implemented on top
+ * of this function.
+ *
  * **Resolution algorithm:**
- * 1. If `opts.explicit` is truthy after trimming → return it (resolved against
- *    `cwd` if relative). No containment restriction.
+ * 1. If `opts.explicit` is truthy after trimming → return `{ paths: [it] }`
+ *    (resolved against `cwd` if relative). No containment restriction.
  * 2. Else if `opts.envVar` is set and the named env var is truthy after
- *    trimming → return it (resolved against `cwd` if relative).
- * 3. Else search for a directory that contains `opts.marker`:
- *    - Check `cwd` itself (depth 0).
+ *    trimming → return `{ paths: [it] }` (resolved against `cwd` if relative).
+ * 3. Else search for directories that contain `opts.marker`:
+ *    - Check `cwd` itself (depth 0) — if it matches, return immediately with
+ *      `{ paths: [cwd] }` without scanning children.
  *    - Search child directories up to `opts.searchDepth` (default 1).
- *    - Exactly 1 match → return it.
+ *    - 1 or more matches → return `{ paths: matches, source: "discovery" }`.
  *    - 0 matches → fall through to step 4.
- *    - ≥2 matches → return `mcpError` (ambiguous).
  *    A directory that **contains** the marker is not recursed further (its
- *    subtree is skipped), but sibling subtrees continue to be scanned so the
- *    ambiguity rule can fire across siblings.
- * 4. Return `cwd` with `source: "cwd"` (no marker found anywhere).
+ *    subtree is skipped), but sibling subtrees continue to be scanned.
+ * 4. Return `{ paths: [cwd], source: "cwd" }` (no marker found anywhere).
  *
  * **Never throws.** All `readdir` errors are caught:
  * - `ENOENT` → treated as "no entries / no match".
@@ -96,14 +129,14 @@ export interface ResolvedRoot {
  * @param readdir - Injectable directory reader; defaults to `fs.readdirSync`.
  *   **Test seam only — production callers must omit this parameter.**
  *
- * @returns A {@link ResolvedRoot} on success, or a {@link CallToolResult} with
- *   `isError: true` on failure. Never throws.
+ * @returns A {@link ResolvedRoots} on success, or a {@link CallToolResult}
+ *   with `isError: true` on failure. Never throws.
  */
-export function resolveRootFolder(
+export function resolveRootFolders(
   opts: ResolveRootFolderOpts,
   env: NodeJS.ProcessEnv = process.env,
   readdir: ReaddirSync = (d, o) => fs.readdirSync(d, o),
-): ResolvedRoot | CallToolResult {
+): ResolvedRoots | CallToolResult {
   // Validate marker
   if (!opts.marker.trim()) {
     return mcpError(new Error("resolveRootFolder: marker is required"));
@@ -121,14 +154,14 @@ export function resolveRootFolder(
   // 1. explicit
   const explicitTrimmed = opts.explicit?.trim();
   if (explicitTrimmed) {
-    return { path: resolveValue(explicitTrimmed), source: "explicit" };
+    return { paths: [resolveValue(explicitTrimmed)], source: "explicit" };
   }
 
   // 2. env
   if (opts.envVar !== undefined) {
     const envValue = env[opts.envVar]?.trim();
     if (envValue) {
-      return { path: resolveValue(envValue), source: "env" };
+      return { paths: [resolveValue(envValue)], source: "env" };
     }
   }
 
@@ -207,7 +240,7 @@ export function resolveRootFolder(
 
   // Depth-0 check: does cwd itself contain the marker?
   if (containsMarker(cwd)) {
-    return { path: cwd, source: "discovery" };
+    return { paths: [cwd], source: "discovery" };
   }
   if (ioError !== null) return ioError;
 
@@ -217,17 +250,52 @@ export function resolveRootFolder(
     if (abort && ioError !== null) return ioError;
   }
 
-  if (matches.length === 1) {
-    return { path: matches[0], source: "discovery" };
-  }
-
-  if (matches.length >= 2) {
-    return mcpError(
-      new Error(`resolveRootFolder: ambiguous root — ${matches.length} directories contain "${marker}"`),
-      matches,
-    );
+  if (matches.length >= 1) {
+    return { paths: matches, source: "discovery" };
   }
 
   // 4. cwd fallback
-  return { path: cwd, source: "cwd" };
+  return { paths: [cwd], source: "cwd" };
+}
+
+/**
+ * Resolves the project root directory using a four-level precedence chain:
+ * `explicit` > `env` > `discovery` > `cwd`.
+ *
+ * Implemented on top of {@link resolveRootFolders}, which owns the discovery
+ * walk: this function narrows a single-candidate result to a `path`, and
+ * formats the multi-candidate ("ambiguous") case as an `mcpError` instead of
+ * the plural's success. See {@link resolveRootFolders} for the full
+ * resolution algorithm and never-throws contract.
+ *
+ * @param opts - Resolution options. See {@link ResolveRootFolderOpts}.
+ * @param env - Environment object; defaults to `process.env`. **Test seam only
+ *   — production callers must omit this parameter.**
+ * @param readdir - Injectable directory reader; defaults to `fs.readdirSync`.
+ *   **Test seam only — production callers must omit this parameter.**
+ *
+ * @returns A {@link ResolvedRoot} on success, or a {@link CallToolResult} with
+ *   `isError: true` on failure (including ambiguous discovery — two or more
+ *   directories containing the marker). Never throws.
+ */
+export function resolveRootFolder(
+  opts: ResolveRootFolderOpts,
+  env: NodeJS.ProcessEnv = process.env,
+  readdir: ReaddirSync = (d, o) => fs.readdirSync(d, o),
+): ResolvedRoot | CallToolResult {
+  const result = resolveRootFolders(opts, env, readdir);
+
+  if (isErrorResult(result)) {
+    return result;
+  }
+
+  if (result.paths.length === 1) {
+    return { path: result.paths[0], source: result.source };
+  }
+
+  // >= 2 candidates only occurs for source: "discovery" — ambiguous root.
+  return mcpError(
+    new Error(`resolveRootFolder: ambiguous root — ${result.paths.length} directories contain "${opts.marker}"`),
+    result.paths,
+  );
 }
