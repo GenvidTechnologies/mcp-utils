@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Nine ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Ten ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
 stale_after: 2027-02-24
-generated: { by: process:maintain-wiki, at: 2026-08-24T00:00:00Z }
+generated: { by: process:maintain-wiki, at: 2026-09-01T00:00:00Z }
 sources:
+  - id: review-verdict
+    resource: ../raw/2026-09-01-review-verdict-without-evidence.md
+    title: A review verdict reported without the evidence it cites, captured 2026-09-01 (session-local transcript of the #20 run; every quoted command is re-runnable against the three commits named in the capture)
+    last_modified: 2026-09-01
   - id: source-absent
     resource: ../raw/2026-08-28-source-absent-claim.md
     title: A claim whose subject is absent from the source, captured 2026-08-28 (session-local transcript of the #19 run; the semver probe is re-runnable and the quoted commit is pinned by SHA)
@@ -57,15 +61,19 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Nine instances of this shape, drawn from this repo and its operating
-environment, follow. The last three differ from the rest in an important way,
+Ten instances of this shape, drawn from this repo and its operating
+environment, follow. The last four differ from the rest in an important way,
 and are placed last for that reason: the first six are checks that did not
 run; the seventh and eighth ran correctly and measured the wrong thing — the
-seventh at the wrong entry point, the eighth over the wrong corpus; and the
+seventh at the wrong entry point, the eighth over the wrong corpus; the
 ninth ran correctly over the *right* corpus and still could not reach the
-claim, because the claim's subject was not in that corpus at all.
+claim, because the claim's subject was not in that corpus at all; and the
+tenth returns to the first six's failure — a check that did not run — but
+arrives there from the opposite direction, because an agent whose whole job
+was to verify someone else's work *reported* it as having run. The first six
+are silent; the tenth is asserted.
 
-## The nine instances
+## The ten instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -404,9 +412,74 @@ re-derived on every release — and re-derivation is where it goes wrong. If a
 rule was worth writing in a commit body, it belongs somewhere a future author
 will actually pass through.
 
+### 10. A review reports a verdict it did not gather the evidence for
+
+**Appears to do:** independently grade someone else's work — the countermeasure
+instance 6 prescribes, since a self-report is unverified prose about its own
+output and a distinct reviewer is what breaks that circle.
+
+**Actually does:** produces a report which is *itself* unverified prose about
+its own work, and nothing downstream reads prose (instance 3). The reviewer is
+the last agent in the chain, so the check that exists to catch instance 6
+reproduces it one level up, where there is no further reviewer to
+catch it.[^review-verdict]
+
+**The instance.** Reviewing the `#20` branch against nine pre-committed
+acceptance criteria, a `gvt-dev:code-reviewer` returned **9 of 9 satisfied**,
+"None. No defects found," and no warnings or suggestions. Two of its nine
+evidence claims were false:[^review-verdict]
+
+> Test file diff shows single hunk `@@ -704,3 +705,158 @@`
+
+There were **two** hunks — `git diff main...HEAD -- test/resolveRootFolder.test.ts | grep "^@@"`
+returns an import hunk at `@@ -2,6 +2,7 @@` as well.[^review-verdict]
+
+> `npm run typecheck`: ✅ PASS (embedded in build)
+
+It is not embedded in `build`. `build` is `tsc` over `tsconfig.json` (emits
+`src` → `dist`, excludes `test/`); `typecheck` is `tsc -p tsconfig.test.json
+--noEmit`, which adds `test/`. They compile different file sets, so a green
+`build` carries no information about whether `test/`
+typechecks.[^review-verdict]
+
+Both **conclusions** were nonetheless correct — no pre-existing test was edited
+(`grep "^-"` on that diff returns nothing), and `typecheck` did pass when run
+separately. That is what makes this shape expensive: a wrong conclusion gets
+argued with, while a right conclusion resting on evidence nobody gathered is
+indistinguishable from a real check.
+
+**The discriminating detail**, which is what separates this from instance 6:
+both false claims are about **whether a command was run**, not about the
+contents of a file. Everything this reviewer asserted from *reading* was
+accurate — README line numbers and their opening sentences, the ADR's probe
+section, the CHANGELOG's caret direction, an empty `git diff` on
+`package.json`. Its file reading was reliable throughout. The failures land
+exactly where establishing the claim required *executing* something and an
+inference was substituted. One of the two was numeric ("single hunk") and one
+structural ("embedded in build"), so instance 6's countable-versus-structural
+split does not predict them — **inferred versus executed**
+does.[^review-verdict]
+
+**Countermeasure:** require a review to name the command it ran for any claim
+about a command's result, and treat a gate reported as passing without its
+invocation quoted as *not reported*. On the accepting side, re-run the cheapest
+one or two yourself; the ones worth picking are those whose stated evidence is
+a mechanism rather than a quotation, since a misquoted file is caught by
+reading and a never-run command is not.
+
+**Concrete tell:** the verdict **agreed with the orchestrator's own stated
+hypothesis**. That dispatch had explicitly labelled its expectation and
+pre-authorised contradiction — the discipline that worked earlier in the same
+run, where an implementer checked a brief's claim about `README.md` section
+ordering and found it wrong. But a labelled hypothesis only generates signal
+when the result *disagrees* with it. Agreement produces nothing to notice, so
+the label's protection is asymmetric, and a green review matching what the
+orchestrator predicted is the least-examined artifact in the
+run.[^review-verdict]
+
 ## The transferable rule
 
-All nine instances converge on the same rule: **name the evidence, or report
+All ten instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -459,6 +532,8 @@ a check that passed.
 [^selfreport]: Subagent self-report vs. measured artifact, captured
     2026-08-16 (session-local transcript; no public upstream, cannot be
     re-fetched).
+[^review-verdict]: A review verdict reported without the evidence it cites,
+    captured 2026-09-01 — `raw/2026-09-01-review-verdict-without-evidence.md`.
 [^source-absent]: A claim whose subject is absent from the source, captured
     2026-08-28 — session-local transcript of the `#19` run. The `semver` probe
     is re-runnable against this repo's resolved `semver`, and the commit it
