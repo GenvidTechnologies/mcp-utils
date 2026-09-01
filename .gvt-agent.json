@@ -32,6 +32,7 @@
   },
   "paths": {
     "docs/TOC.md": "wiki/index.md",
+    "docs/code-review-context.md": "wiki/process/code-review-context.md",
     "docs/decisions/": "wiki/decisions/",
     "docs/wiki-schema.md": "wiki/wiki-schema.md"
   }
