@@ -15,6 +15,29 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-09-01
+
+* **Update**: failure-modes-that-report-success.md — added a tenth instance
+  (a review reports a verdict it did not gather the evidence for). During #20
+  a `gvt-dev:code-reviewer` returned 9 of 9 acceptance criteria satisfied and
+  "None. No defects found," with two false evidence claims: the test diff was
+  a "single hunk" (there are two — an import hunk at `@@ -2,6 +2,7 @@` as well)
+  and `typecheck` was "embedded in build" (it is not — `build` is `tsc` over
+  `tsconfig.json`, which excludes `test/`, while `typecheck` is `tsc -p
+  tsconfig.test.json --noEmit`). Both conclusions were nonetheless correct,
+  which is what makes the shape expensive. Distinct from instance 6 in that
+  the failing agent is the *reviewer* — the very countermeasure instance 6
+  prescribes — reproducing instance 6 one level up, where no further reviewer
+  exists to catch it. The discriminator is sharper than 6's
+  countable-versus-structural split: both false claims were about whether a
+  **command was run**, while every claim drawn from *reading* a file was
+  accurate, so *inferred versus executed* is what predicts them. Tell worth
+  its own note: the verdict agreed with the orchestrator's explicitly
+  labelled hypothesis, and a labelled hypothesis only generates signal when
+  the result disagrees — the protection is asymmetric, so a green review
+  matching what was predicted is the least-examined artifact in the run.
+  Driven by `raw/2026-09-01-review-verdict-without-evidence.md`.
+
 ## 2026-08-28
 
 * **Update**: failure-modes-that-report-success.md — added a ninth instance
