@@ -41,6 +41,30 @@ This file starts at 0.6.0. For earlier versions see the
   picking this up downstream is deliberate work rather than a transparent bump,
   exactly as 0.8.0 was for consumers pinning `^0.7.0`.
 
+- **`resolveRootFolders`: the plural counterpart of `resolveRootFolder`, returning
+  every ambiguous-discovery candidate as a success.** `resolveRootFolder` already
+  computed the full candidate set during ambiguous discovery, and it already
+  reached the caller — as one absolute path per line in an `mcpError`'s
+  `extraLines`, on an error result. `resolveRootFolders` returns `{ paths: string[];
+  source }` instead, in which two-or-more candidates is a **success**, for the
+  caller (a deferred `construct3-chef` multi-root auto-discovery consumer) that
+  needs to register every candidate as its own project rather than reach a success
+  through `isMcpError`. `resolveRootFolder` is now implemented on top of
+  `resolveRootFolders` — one discovery walk, not two — but **its observable output
+  is unchanged**: the same message, the same `extraLines`, the same error shape for
+  the ambiguous case. All 32 pre-existing `resolveRootFolder` tests pass unmodified.
+  Two other shapes for carrying the candidate list — a `structuredContent` payload
+  and a bare top-level field on the ambiguous `mcpError` — were probed end-to-end
+  over a real MCP client and confirmed to transport correctly, then rejected on
+  design merit: both would have made a success reachable only through an error
+  branch. Rationale and rejected alternatives:
+  [ADR-0006](wiki/decisions/0006-resolve-root-folders-plural.md).
+
+  **Shipping as a minor bump, not a patch.** `resolveRootFolders` and
+  `ResolvedRoots` are new exports; nothing existing was removed or renamed. As
+  above, `^0.8.0` **excludes** `0.9.0` below 1.0.0 — this does not reach existing
+  caret-pinned consumers silently.
+
 ### Changed
 
 - **`docs/` is retired; the wiki is this repo's only documentation tier.** The

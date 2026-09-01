@@ -17,6 +17,7 @@ export { loadProjectConfig, isMcpError, type LoadConfigOpts } from "./loadProjec
 export { ObservedState, contentFingerprint } from "./observedState.js";
 export type { Fingerprinter } from "./observedState.js";
 export { resolveRootFolder, type ResolveRootFolderOpts, type ResolvedRoot } from "./resolveRootFolder.js";
+export { resolveRootFolders, type ResolvedRoots } from "./resolveRootFolder.js";
 export {
   formatTxToken,
   parseTxToken,

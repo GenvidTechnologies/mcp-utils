@@ -2,6 +2,7 @@ import { expect } from "chai";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { resolveRootFolder, type ResolveRootFolderOpts } from "../src/resolveRootFolder.js";
+import { resolveRootFolders, type ResolvedRoots } from "../src/resolveRootFolder.js";
 import { isMcpError } from "../src/loadProjectConfig.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -702,5 +703,160 @@ describe("resolveRootFolder", () => {
     expect(r.path).to.equal(childA);
     // Subtree of matched dir must NOT be scanned
     expect(subScanned).to.be.false;
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveRootFolders (plural) — additive suite
+//
+// Same precedence chain as resolveRootFolder, differing only at >=2 child
+// matches: that case is a SUCCESS here, carrying every candidate, rather
+// than an mcpError. resolveRootFolder's unmodified suite above is what
+// proves the re-expression didn't change its observable output.
+// ---------------------------------------------------------------------------
+
+describe("resolveRootFolders", () => {
+  const CWD = path.resolve("/fake/cwd");
+  const MARKER = "project.c3proj";
+
+  it("explicit path → paths: [p], source 'explicit'", () => {
+    const explicitPath = path.resolve("/some/other/dir");
+    const opts: ResolveRootFolderOpts = {
+      explicit: explicitPath,
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const readdir = makeStubReaddir({});
+    const result = resolveRootFolders(opts, {}, readdir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("explicit");
+    expect(r.paths).to.deep.equal([explicitPath]);
+  });
+
+  it("env var set → paths: [p], source 'env'", () => {
+    const envPath = path.resolve("/from/env/dir");
+    const opts: ResolveRootFolderOpts = {
+      envVar: "MY_PROJECT_DIR",
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const env = { MY_PROJECT_DIR: envPath };
+    const readdir = makeStubReaddir({});
+    const result = resolveRootFolders(opts, env, readdir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("env");
+    expect(r.paths).to.deep.equal([envPath]);
+  });
+
+  it("cwd contains marker → paths: [cwd], source 'discovery' (depth-0 short-circuit; children not scanned)", () => {
+    const opts: ResolveRootFolderOpts = {
+      marker: MARKER,
+      cwd: CWD,
+    };
+    let childScanned = false;
+    const stubbedReaddir = (dir: string, _opts: { withFileTypes: true }): fs.Dirent[] => {
+      const normalised = path.normalize(dir);
+      if (normalised === CWD) {
+        return [makeDirent(MARKER, "file"), makeDirent("childA", "dir")];
+      }
+      childScanned = true;
+      const err = new Error("ENOENT") as NodeJS.ErrnoException;
+      err.code = "ENOENT";
+      throw err;
+    };
+    const result = resolveRootFolders(opts, {}, stubbedReaddir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("discovery");
+    expect(r.paths).to.deep.equal([CWD]);
+    // Depth-0 short-circuit preserved: children must not be scanned.
+    expect(childScanned).to.be.false;
+  });
+
+  it("single marker dir at depth 1 → paths: [childA], source 'discovery'", () => {
+    const childA = path.join(CWD, "childA");
+    const childB = path.join(CWD, "childB");
+    const opts: ResolveRootFolderOpts = {
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const readdir = makeStubReaddir({
+      [CWD]: [makeDirent("childA", "dir"), makeDirent("childB", "dir")],
+      [childA]: [makeDirent(MARKER, "file")],
+      [childB]: [makeDirent("other.txt", "file")],
+    });
+    const result = resolveRootFolders(opts, {}, readdir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("discovery");
+    expect(r.paths).to.deep.equal([childA]);
+  });
+
+  it("two marker dirs (siblings) → SUCCESS, paths carries ALL candidates, source 'discovery'", () => {
+    const childA = path.join(CWD, "childA");
+    const childB = path.join(CWD, "childB");
+    const opts: ResolveRootFolderOpts = {
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const readdir = makeStubReaddir({
+      [CWD]: [makeDirent("childA", "dir"), makeDirent("childB", "dir")],
+      [childA]: [makeDirent(MARKER, "file")],
+      [childB]: [makeDirent(MARKER, "file")],
+    });
+    const result = resolveRootFolders(opts, {}, readdir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("discovery");
+    expect(r.paths).to.have.lengthOf(2);
+    expect(r.paths).to.have.members([childA, childB]);
+  });
+
+  it("nothing found anywhere → paths: [cwd], source 'cwd'", () => {
+    const opts: ResolveRootFolderOpts = {
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const readdir = makeStubReaddir({
+      [CWD]: [makeDirent("childA", "dir")],
+      [path.join(CWD, "childA")]: [makeDirent("readme.txt", "file")],
+    });
+    const result = resolveRootFolders(opts, {}, readdir);
+    expect(isMcpError(result)).to.be.false;
+    const r = result as ResolvedRoots;
+    expect(r.source).to.equal("cwd");
+    expect(r.paths).to.deep.equal([CWD]);
+  });
+
+  it("empty marker → mcpError, mentions 'marker is required'", () => {
+    const opts: ResolveRootFolderOpts = {
+      marker: "",
+      cwd: CWD,
+    };
+    const result = resolveRootFolders(opts, {}, makeStubReaddir({}));
+    expect(isMcpError(result)).to.be.true;
+    const text = errorText(result);
+    expect(text).to.include("resolveRootFolder");
+    expect(text).to.include("marker is required");
+  });
+
+  it("non-ENOENT readdir error at cwd level → mcpError, does not throw", () => {
+    const opts: ResolveRootFolderOpts = {
+      marker: MARKER,
+      cwd: CWD,
+    };
+    const throwingReaddir = (_dir: string, _opts: { withFileTypes: true }): fs.Dirent[] => {
+      const err = new Error("Permission denied") as NodeJS.ErrnoException;
+      err.code = "EACCES";
+      throw err;
+    };
+    let result: unknown;
+    expect(() => {
+      result = resolveRootFolders(opts, {}, throwingReaddir);
+    }).to.not.throw();
+    expect(isMcpError(result)).to.be.true;
+    expect(errorText(result)).to.include("resolveRootFolder");
   });
 });

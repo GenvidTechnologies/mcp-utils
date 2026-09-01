@@ -41,7 +41,8 @@ Each utility is independent — import only what you need. Grouped here the same
 
 - [`walkFiles`](#walkfiles) — recursive walk returning only regular files
 - [`resolveWithin`](#resolvewithin) — lexical path-traversal guard
-- [`resolveRootFolder`](#resolverootfolder) — resolve a project root by precedence
+- [`resolveRootFolder`](#resolverootfolder) — resolve exactly one project root by precedence; ambiguity is an error
+- [`resolveRootFolders`](#resolverootfolders) — resolve one or more project root candidates by precedence; ambiguity is data
 - [`loadProjectConfig` / `isMcpError`](#loadprojectconfig--ismcperror) — read, merge, and validate a project config
 
 **Strings**
@@ -219,7 +220,7 @@ resolveWithin("/project", "");             // "/project"
 
 ### resolveRootFolder
 
-Resolves a project root directory for an MCP server using a four-level precedence chain — `explicit` > `env` > `discovery` > `cwd` — so bundled servers launched with no CLI arguments don't need to hand-roll this logic.
+Resolves **exactly one** project root directory for an MCP server using a four-level precedence chain — `explicit` > `env` > `discovery` > `cwd` — so bundled servers launched with no CLI arguments don't need to hand-roll this logic. Reach for this over its plural counterpart, [`resolveRootFolders`](#resolverootfolders), when your program needs a single root and treats two or more marker matches as a failure to report — the common case, e.g. a server targeting one project. (`resolveRootFolder` is implemented on top of `resolveRootFolders`; this section documents its narrower, single-root contract.)
 
 ```ts
 import { resolveRootFolder, isMcpError } from "@genvidtech/mcp-utils";
@@ -267,6 +268,48 @@ if (source === "cwd") {
 4. Return `cwd` with `source: "cwd"` — no marker found anywhere.
 
 **Never throws.** I/O errors from directory scanning are caught: `ENOENT` is treated as "no entries"; all other errors (e.g. `EACCES`) are returned as `mcpError`. Use `isMcpError` to narrow the `ResolvedRoot | CallToolResult` return type.
+
+### resolveRootFolders
+
+Resolves the project root **candidates** for an MCP server using the same four-level precedence chain — `explicit` > `env` > `discovery` > `cwd` — as [`resolveRootFolder`](#resolverootfolder). Reach for this over the singular when two or more marker matches is a legitimate outcome you intend to act on (e.g. registering every candidate as its own project), so ambiguity comes back as data rather than an error. `resolveRootFolder` is implemented on top of this function, and its own observable output is unchanged.
+
+```ts
+import { resolveRootFolders, isMcpError } from "@genvidtech/mcp-utils";
+
+const result = resolveRootFolders({
+  marker: "project.c3proj",  // discovery: look for this entry in child dirs
+  searchDepth: 2,             // how many levels below cwd to search (default: 1)
+});
+
+if (isMcpError(result)) return result; // propagate any error
+const { paths, source } = result;
+if (source === "discovery" && paths.length > 1) {
+  for (const projectDir of paths) registerProject(projectDir);
+}
+```
+
+Takes the same **ResolveRootFolderOpts** as `resolveRootFolder` — see [its options table](#resolverootfolder) above.
+
+**ResolvedRoots**
+
+| Field | Type | Description |
+|---|---|---|
+| `paths` | `string[]` | Absolute paths to the resolved project root candidate(s). Always non-empty; more than one entry occurs only when `source` is `"discovery"` — two or more sibling directories contained the marker. |
+| `source` | `"explicit" \| "env" \| "discovery" \| "cwd"` | How the candidates were determined. `"cwd"` means no marker was found anywhere — the silent fallback; consumers typically warn on this value. |
+
+**Resolution algorithm**
+
+Same as `resolveRootFolder`'s (above), except step 3 collects every match instead of stopping at "exactly one":
+
+1. If `opts.explicit` is set and non-blank → return `{ paths: [it] }` (resolved to absolute). No containment restriction.
+2. Else if `opts.envVar` is set and the named env var is non-blank → return `{ paths: [it] }` (resolved to absolute). No containment restriction.
+3. Else search for directories that **contain** `opts.marker`:
+   - Check `cwd` itself (depth 0), then scan child directories up to `opts.searchDepth`.
+   - 1 or more matches → return `{ paths: matches, source: "discovery" }`.
+   - 0 matches → fall through to step 4.
+4. Return `{ paths: [cwd], source: "cwd" }` — no marker found anywhere.
+
+**Never throws.** Same I/O error handling as `resolveRootFolder`: `ENOENT` is treated as "no entries"; all other errors (e.g. `EACCES`) are returned as `mcpError`. Use `isMcpError` to narrow the `ResolvedRoots | CallToolResult` return type.
 
 ### mcpError / withMcpErrors
 
