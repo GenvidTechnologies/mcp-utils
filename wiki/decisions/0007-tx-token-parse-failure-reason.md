@@ -46,7 +46,12 @@ The four accept-set rows where chef's local parser diverges from this
 module — all still rejected here — sharpen why the distinction matters: chef
 **silently truncates** `"alpha:9007199254740993"` to `9007199254740992` and
 reports success, exactly the failure mode a folded "generic counter error"
-reason would have made harder to tell apart from a shape rejection.
+reason would have made harder to tell apart from a shape rejection. That
+truncation is a live defect in chef rather than a stylistic difference, and
+is tracked as
+[construct3-chef#222](https://github.com/GenvidTechnologies/construct3-chef/issues/222);
+it is out of scope here, since this package's parser already rejects the
+input.
 
 ## Decision
 
