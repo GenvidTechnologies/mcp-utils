@@ -41,33 +41,34 @@ describe("formatTxToken", () => {
 
 describe("parseTxToken", () => {
   it("parses a well-formed token", () => {
-    expect(parseTxToken("alpha:3")).to.deep.equal({ projectId: "alpha", n: 3 });
+    expect(parseTxToken("alpha:3")).to.deep.equal({ ok: true, projectId: "alpha", n: 3 });
   });
 
-  it("returns null for a token with no delimiter, and does not throw", () => {
-    expect(parseTxToken("garbage")).to.be.null;
+  it("rejects a token with no delimiter with reason 'no-separator', and does not throw", () => {
+    expect(parseTxToken("garbage")).to.deep.equal({ ok: false, reason: "no-separator" });
   });
 
-  it("returns null for a token with an extra colon (split on the first ':')", () => {
-    expect(parseTxToken("a:b:c")).to.be.null;
+  it("rejects a token with an extra colon (split on the first ':') with reason 'invalid-counter-shape'", () => {
+    expect(parseTxToken("a:b:c")).to.deep.equal({ ok: false, reason: "invalid-counter-shape" });
   });
 
-  it("returns null for the empty string", () => {
-    expect(parseTxToken("")).to.be.null;
+  it("rejects the empty string with reason 'no-separator'", () => {
+    expect(parseTxToken("")).to.deep.equal({ ok: false, reason: "no-separator" });
   });
 
   it("parses n: 0", () => {
-    expect(parseTxToken("alpha:0")).to.deep.equal({ projectId: "alpha", n: 0 });
+    expect(parseTxToken("alpha:0")).to.deep.equal({ ok: true, projectId: "alpha", n: 0 });
   });
 
   it("parses n at MAX_SAFE_INTEGER", () => {
     expect(parseTxToken(`alpha:${Number.MAX_SAFE_INTEGER}`)).to.deep.equal({
+      ok: true,
       projectId: "alpha",
       n: Number.MAX_SAFE_INTEGER,
     });
   });
 
-  describe("the 7 malformed-shape cases pledged in A5 — all parse to null", () => {
+  describe("the 7 malformed-shape cases pledged in A5 — all reject (ok: false)", () => {
     const cases = [
       "alpha:",
       "alpha:+3",
@@ -78,8 +79,9 @@ describe("parseTxToken", () => {
       "alpha:9007199254740993",
     ];
     for (const token of cases) {
-      it(`${JSON.stringify(token)} -> null`, () => {
-        expect(parseTxToken(token)).to.be.null;
+      it(`${JSON.stringify(token)} -> ok: false`, () => {
+        const parsed = parseTxToken(token);
+        expect(parsed.ok).to.equal(false);
       });
     }
   });
@@ -87,8 +89,8 @@ describe("parseTxToken", () => {
   describe("never throws for non-string input", () => {
     const nonStrings: unknown[] = [undefined, null, 42, {}, []];
     for (const value of nonStrings) {
-      it(`${JSON.stringify(value === undefined ? "undefined" : value)} -> null`, () => {
-        expect(parseTxToken(value as unknown as string)).to.be.null;
+      it(`${JSON.stringify(value === undefined ? "undefined" : value)} -> ok: false, reason: 'not-a-string'`, () => {
+        expect(parseTxToken(value as unknown as string)).to.deep.equal({ ok: false, reason: "not-a-string" });
       });
     }
   });
@@ -98,8 +100,9 @@ describe("parseTxToken", () => {
     for (const token of tokens) {
       it(`holds for ${JSON.stringify(token)}`, () => {
         const parsed = parseTxToken(token);
-        expect(parsed).to.not.be.null;
-        expect(formatTxToken(parsed!.projectId, parsed!.n)).to.equal(token);
+        expect(parsed.ok).to.equal(true);
+        if (!parsed.ok) throw new Error("unreachable");
+        expect(formatTxToken(parsed.projectId, parsed.n)).to.equal(token);
       });
     }
   });

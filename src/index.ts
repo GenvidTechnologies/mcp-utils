@@ -24,4 +24,6 @@ export {
   compareTxToken,
   isValidProjectId,
   type TxToken,
+  type TxTokenParseFailure,
+  type TxTokenParseResult,
 } from "./txToken.js";
