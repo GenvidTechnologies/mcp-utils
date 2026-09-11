@@ -585,6 +585,8 @@ import type { TxToken, TxTokenParseFailure, TxTokenParseResult } from "@genvidte
 
 When `parseTxToken(token)` returns `{ ok: true, ... }`, `formatTxToken(result.projectId, result.n) === token` (round-trip invariant).
 
+**Changed in 0.10.0.** Through 0.9.0 `parseTxToken` returned the parsed halves or a bare `null`, discarding which check had failed. It now returns the discriminated result above. **The accept set is unchanged** — exactly the same tokens parse as before, and the same ones are rejected — so migrating is replacing `=== null` with `!result.ok`, and reading `result.reason` where you previously had nothing to read.
+
 ```ts
 formatTxToken("alpha", 3);              // "alpha:3"
 parseTxToken("alpha:3");                // { ok: true, projectId: "alpha", n: 3 }
