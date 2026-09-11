@@ -42,6 +42,12 @@ npm run typecheck       # tsc -p tsconfig.test.json --noEmit (typechecks src AND
 npm run test            # mocha over test/**/*.test.ts
 ```
 
+There is **no `npm run validate` script.** `.gvt-agent.json`'s
+`commands.validate` is the *composition* of the four above —
+`npm run lint && npm run typecheck && npm run test && npm run build` — which is
+what `/gvt-dev:validate-changes` and the `gvt-dev:validator` agent run. Typing
+`npm run validate` fails with `Missing script: "validate"`; run the chain.
+
 Run a single test file or filter by name:
 
 ```bash
