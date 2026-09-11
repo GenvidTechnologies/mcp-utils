@@ -49,9 +49,15 @@ reports success, exactly the failure mode a folded "generic counter error"
 reason would have made harder to tell apart from a shape rejection. That
 truncation is a live defect in chef rather than a stylistic difference, and
 is tracked as
-[construct3-chef#222](https://github.com/GenvidTechnologies/construct3-chef/issues/222);
+[construct3-chef#221](https://github.com/GenvidTechnologies/construct3-chef/issues/221);
 it is out of scope here, since this package's parser already rejects the
-input.
+input. (This record first cited chef#222, filed from this side as a duplicate
+of the earlier #221 and since closed. #221 is also the more accurate of the
+two: it establishes that the truncation **cannot** produce a false accept,
+because truncation occurs only above 2^53 while a live `txId` starts at 0 and
+increments per mutation, so a truncated value can never equal a live counter.
+The defect is that chef accepts input it should reject and reports a counter
+the caller never sent — not that its concurrency guard is unsound.)
 
 ## Decision
 
