@@ -15,6 +15,22 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-09-11
+
+* **Update**: failure-modes-that-report-success.md — added an eleventh
+  instance, "A differential check whose corpus never exercises the positive
+  case," from the `#25` (`parseTxToken` failure reason) run. A differential
+  probe established the branch's load-bearing claim that the accept set did not
+  move, reporting `mismatches: 0` over 20,036 inputs — but only **112** (0.56%)
+  were accepted by the pre-change parser, so the headline number is one an
+  implementation rejecting everything would also produce. Distinguished in the
+  page from instance 7 (wrong entry point) and instance 8 (a corpus missing a
+  category): here nothing is misaimed and nothing is absent, the informative
+  class is simply drowned. Source: `raw/2026-09-11-vacuous-differential-corpus.md`,
+  a new immutable capture — the probe was a scratchpad artifact and was
+  discarded, so the capture is its only record. Page heading, intro ordering,
+  `description`, `generated.at` and `stale_after` all moved with the addition.
+
 ## 2026-09-01
 
 * **Update**: failure-modes-that-report-success.md — added a tenth instance
