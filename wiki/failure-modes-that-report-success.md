@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Ten ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Eleven ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
-stale_after: 2027-02-24
-generated: { by: process:maintain-wiki, at: 2026-09-01T00:00:00Z }
+stale_after: 2027-09-11
+generated: { by: process:maintain-wiki, at: 2026-09-11T00:00:00Z }
 sources:
+  - id: vacuous-corpus
+    resource: ../raw/2026-09-11-vacuous-differential-corpus.md
+    title: A differential check whose corpus never exercises the positive case, captured 2026-09-11 (session-local transcript of the #25 run; the probe was a discarded scratchpad artifact, but every command quoted is re-runnable against the branch named in the capture)
+    last_modified: 2026-09-11
   - id: review-verdict
     resource: ../raw/2026-09-01-review-verdict-without-evidence.md
     title: A review verdict reported without the evidence it cites, captured 2026-09-01 (session-local transcript of the #20 run; every quoted command is re-runnable against the three commits named in the capture)
@@ -61,19 +65,22 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Ten instances of this shape, drawn from this repo and its operating
-environment, follow. The last four differ from the rest in an important way,
+Eleven instances of this shape, drawn from this repo and its operating
+environment, follow. The last five differ from the rest in an important way,
 and are placed last for that reason: the first six are checks that did not
 run; the seventh and eighth ran correctly and measured the wrong thing — the
 seventh at the wrong entry point, the eighth over the wrong corpus; the
 ninth ran correctly over the *right* corpus and still could not reach the
-claim, because the claim's subject was not in that corpus at all; and the
+claim, because the claim's subject was not in that corpus at all; the
 tenth returns to the first six's failure — a check that did not run — but
 arrives there from the opposite direction, because an agent whose whole job
-was to verify someone else's work *reported* it as having run. The first six
-are silent; the tenth is asserted.
+was to verify someone else's work *reported* it as having run; and the
+eleventh ran correctly, over a corpus with nothing missing from it, and still
+could not carry its claim, because the cases that would have distinguished the
+claim from its negation were 0.56% of what it measured. The first six are
+silent; the tenth is asserted; the eleventh is arithmetic.
 
-## The ten instances
+## The eleven instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -477,9 +484,66 @@ the label's protection is asymmetric, and a green review matching what the
 orchestrator predicted is the least-examined artifact in the
 run.[^review-verdict]
 
+### 11. A differential check whose corpus never exercises the positive case
+
+**Appears to do:** establish that a refactor preserved behavior, by running the
+pre-change and post-change implementations over one shared corpus and reporting
+that they never disagreed — the strongest form of evidence available when the
+test suite was rewritten in the same commit and so carries no information about
+the old contract.[^vacuous-corpus]
+
+**Actually does:** over a corpus dominated by inputs *both* implementations
+reject, report a number that an implementation rejecting **everything** would
+also produce. The check ran, it ran correctly, and its output is reproducible —
+it simply cannot tell the claim apart from its negation.[^vacuous-corpus]
+
+**The instance.** `#25` changed `parseTxToken`'s return shape from
+`{ projectId; n } | null` to a discriminated result. The load-bearing claim, in
+the commit body, the CHANGELOG, README and ADR-0007, was that the **accept set
+did not move**. A differential probe compared both implementations over 20,036
+inputs — 36 fixed plus 20,000 fuzzed — and reported `mismatches: 0`.[^vacuous-corpus]
+
+Of those 20,036 inputs, **112 were accepted** by the pre-change parser. That is
+**0.56%**. The other 99.4% were rejected by both, and every one of them
+contributes a trivially-matching pair, `false === false`. So the headline
+`mismatches: 0` is a result a parser rejecting every input whatsoever would
+produce against the same corpus.[^vacuous-corpus]
+
+**The discriminating detail** is what separates this from the two neighbours it
+most resembles, since all three ran correctly and measured the wrong thing.
+Instance 7 answered a question the running system never poses — **wrong entry
+point**, right method; re-aim the probe and it is fixed. Instance 8 enumerated
+references in one direction only — a **missing category**, a corpus with a
+whole class absent; widen the enumeration and it is fixed. This one has the
+right entry point *and* every category present: the accepting cases are in
+there, all 112 of them. What fails is **composition** — the informative class
+is 0.56% of the corpus, so the aggregate is dominated by pairs that would match
+under any hypothesis. Nothing is missing and nothing is misaimed, which is why
+neither of the other two fixes applies and why "the probe ran, its corpus was
+complete, and its numbers are real" clears none of the
+three.[^vacuous-corpus]
+
+**Countermeasure:** an equivalence claim is carried by its **positive** cases.
+Report the count of inputs that exercised the accepting path *beside* the
+headline agreement number, and treat a differential result quoted without it as
+**not reported**. The probe here printed
+`of which the OLD impl accepted: 112` for exactly this reason. The negative
+cases bound such a claim; they cannot establish it.[^vacuous-corpus]
+
+**Concrete tell:** **corpus size cited as rigor.** `20,036 inputs, 0 mismatches`
+reads far more persuasively than `36 inputs, 0 mismatches`, and it is the
+sentence that gets quoted — while the 20,000 fuzzed strings added exactly 107
+accepted cases and 19,893 further pairs of matching rejections. A corpus can
+always be scaled in the direction that establishes nothing, and scaling it that
+way makes the check look stronger. The fuzz alphabet here was deliberately
+seeded with `:` and digits at short lengths so some generated strings would be
+well-formed; a letters-only alphabet would have yielded **zero** accepted
+inputs, a clean `mismatches: 0`, and an identical-looking
+transcript.[^vacuous-corpus]
+
 ## The transferable rule
 
-All ten instances converge on the same rule: **name the evidence, or report
+All eleven instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -534,6 +598,12 @@ a check that passed.
     re-fetched).
 [^review-verdict]: A review verdict reported without the evidence it cites,
     captured 2026-09-01 — `raw/2026-09-01-review-verdict-without-evidence.md`.
+[^vacuous-corpus]: A differential check whose corpus never exercises the
+    positive case, captured 2026-09-11 —
+    `raw/2026-09-11-vacuous-differential-corpus.md`. Session-local transcript
+    of the `#25` run; the probe itself was a scratchpad artifact and was
+    discarded, so the capture is its only record, but every command it quotes
+    is re-runnable against branch `feat/txtoken-parse-failure-reason`.
 [^source-absent]: A claim whose subject is absent from the source, captured
     2026-08-28 — session-local transcript of the `#19` run. The `semver` probe
     is re-runnable against this repo's resolved `semver`, and the commit it

@@ -11,6 +11,38 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Changed
+
+- **`txToken`: `parseTxToken` now returns a discriminated result instead of
+  `T | null`.** The return type is `{ ok: true; projectId; n } | { ok: false;
+  reason: TxTokenParseFailure }`, where `TxTokenParseFailure` is a five-member
+  union — `"not-a-string" | "no-separator" | "invalid-project-id" |
+  "invalid-counter-shape" | "counter-out-of-range"` — one member per rejection
+  branch. `TxTokenParseFailure` and `TxTokenParseResult` are new exported
+  types. This exists because a consumer rendering a diagnostic previously had
+  to re-derive the accept/reject rules locally to explain *why* a token was
+  rejected — duplication this codec exists to remove, and duplication that
+  fails silently the moment the accept set changes underneath it.
+
+  **The accept set itself is unchanged** — the same tokens that used to parse
+  successfully still do, and the same malformed tokens still fail; only the
+  shape of a *rejection* is now classified instead of collapsed to `null`.
+
+  **Breaking: any caller comparing `parseTxToken(...) === null` must move to
+  `!result.ok`.** No importer of `parseTxToken` exists in this repo's known
+  consumers today, so the change has no known affected caller, but the
+  package is public on npm and unmeasured external consumers may exist.
+  `compareTxToken` is unaffected — same `boolean` return, same truth table,
+  same passing assertions.
+
+  **Shipping as 0.10.0, a minor bump, not a patch — and consumers pinned at
+  `^0.9.0` will *not* pick this up automatically.** Below 1.0.0 a caret pin
+  excludes every minor bump: `^0.9.0` resolves as `>=0.9.0 <0.10.0`, so while
+  the major stays `0`, npm's caret permits only patch updates. Both named
+  downstream consumers (`construct3-chef`, `c3-domain-manager`) currently pin
+  `^0.9.0` and must widen their range to `^0.10.0` deliberately to receive
+  this change — it does not reach them on their next plain install.
+
 ## [0.9.0] - 2026-09-01
 
 ### Added

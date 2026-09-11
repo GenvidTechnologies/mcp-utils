@@ -29,7 +29,7 @@ wiki pages:
 
 Cross-cutting notes that generalize past this package.
 
-* [Failure modes that report success](failure-modes-that-report-success.md) - Seven ways a check on this stack passes without having checked — and the evidence rule that catches them.
+* [Failure modes that report success](failure-modes-that-report-success.md) - Eleven ways a check on this stack passes without having checked — and the evidence rule that catches them.
 
 ## Process
 
@@ -51,6 +51,7 @@ Architecture decisions — see [`decisions/index.md`](decisions/index.md).
 * [0004. The wiki is this repo's only documentation tier](decisions/0004-wiki-is-the-only-documentation-tier.md) - Why `docs/` was retired into `wiki/`, what replaced the wiki's scope bar, and the two hardcoded plugin literals that relocation knowingly breaks.
 * [0005. The tx-token wire format is a shared codec, not a per-consumer implementation](decisions/0005-tx-token-wire-format.md) - Why `formatTxToken`/`parseTxToken`/`compareTxToken`/`isValidProjectId` ship as one `${projectId}:${n}` codec in this package, and why lenient `n`-parsing and a branded token type were both rejected.
 * [0006. resolveRootFolders ships as an additive plural, not a field on the ambiguous error](decisions/0006-resolve-root-folders-plural.md) - Why ambiguous discovery becomes a success on a new `resolveRootFolders({ paths, source })` rather than a `matches` field on `resolveRootFolder`'s error result, and why both rejected error-payload options were probed end-to-end before being rejected on design merit.
+* [0007. parseTxToken returns a discriminated result with a parse-failure reason](decisions/0007-tx-token-parse-failure-reason.md) - Why `parseTxToken` returns `{ ok: true; projectId; n } | { ok: false; reason }` with a five-member `TxTokenParseFailure` union instead of bare `null`, and why a three-member union, an additive `parseTxTokenDetailed` sibling, and an exported predicate trio were all rejected.
 
 <!--
 No architecture.md, design-patterns.md, or runbook.md: this package has no
