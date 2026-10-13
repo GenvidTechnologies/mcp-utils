@@ -63,7 +63,9 @@ This file starts at 0.6.0. For earlier versions see the
     event (for example in one synchronous block) reads as unchanged. It keeps
     its identity and no file event arrives for the outside edit; its marker
     still claims its children are known, so files added during the round trip
-    are not recorded until their own events arrive. If the
+    are not recorded until their own events arrive; if none do (the
+    directory is later moved out or removed as a whole, which raises no
+    per-file event), that later change reads as unchanged too. If the
     move-out event is handled first, the change is caught. Closing it would
     mean re-hashing a directory's subtree on every directory event, which
     would undo the quiet read-only path; [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
@@ -80,7 +82,9 @@ This file starts at 0.6.0. For earlier versions see the
     different identity is re-evaluated rather than matched against orphaned
     child fingerprints (but see the known limit above for the same-identity
     round trip).
-  - A first event on a pre-existing file no longer bumps `txId`.
+  - A first event on a file that was in the baseline (under a primed root, on
+    a complete ledger) no longer bumps `txId`; a file outside the baseline
+    still bumps on its first event.
   - The scan of a never-seen directory under a primed root hashes its files
     synchronously on the event path, at a cost proportional to that subtree.
   - A throwing custom `Fingerprinter` no longer throws out of an L1/L2

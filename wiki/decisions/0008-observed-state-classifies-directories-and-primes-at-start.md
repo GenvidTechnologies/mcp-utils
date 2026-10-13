@@ -302,8 +302,11 @@ Alternatives weighed and rejected for the first-read part:
   inode. The same-identity rule skips any child comparison, and the edit
   happened outside the root, so no file event arrives. The directory's marker
   also still claims its children are known, so files added during the round
-  trip are not recorded until their own events arrive. If the move-out event
-  is handled before the move-back, the change is caught (measured). Closing it
+  trip are not recorded until their own events arrive; if none do (the
+  directory is later moved out or removed as a whole, which raises no
+  per-file event), that later change reads as unchanged too. If the move-out
+  event is handled before the move-back, the change is caught (measured).
+  Closing it
   would mean re-hashing a directory's subtree on every directory event, and
   on Windows listing a directory fires one, which is the read-only hot path
   this record exists to keep quiet. It is deliberately not done;

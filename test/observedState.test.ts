@@ -179,7 +179,7 @@ describe("ObservedState", () => {
       expect(state.isChanged(D)).to.be.true;
     });
 
-    it("O47:a root passed with a trailing slash still vouches for a never-seen directory beneath it", () => {
+    it("O47: a root passed with a trailing slash still vouches for a never-seen directory beneath it", () => {
       const r = path.join(root, "r");
       const D = path.join(r, "D");
       fs.mkdirSync(r);
