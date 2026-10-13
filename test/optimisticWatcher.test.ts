@@ -720,6 +720,41 @@ describe("OptimisticWatcher", () => {
         expect(w.txId).to.equal(2);
       });
 
+      it("W19: a directory moved in by a self-write, then moved out externally, bumps once", async () => {
+        const { w, fire } = make();
+        w.start();
+        const staging = path.join(outside, "staging");
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "a.txt"), "A");
+        const dest = path.join(sub, "D");
+        await w.suppress(async () => {
+          fs.renameSync(staging, dest);
+          fire(dest);
+        });
+        expect(w.txId).to.equal(0);
+        fs.renameSync(dest, path.join(outside, "D2"));
+        fire(dest);
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W20: a primed directory swapped by two renames bumps once on a single event", () => {
+        const dest = path.join(sub, "D");
+        fs.mkdirSync(dest);
+        fs.writeFileSync(path.join(dest, "a.txt"), "A");
+        fs.writeFileSync(path.join(dest, "c.txt"), "C");
+        const { w, fire } = make();
+        w.start();
+        fs.renameSync(dest, path.join(outside, "Dold"));
+        const staging = path.join(outside, "staging");
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "a.txt"), "A");
+        fs.writeFileSync(path.join(staging, "b.txt"), "B");
+        fs.renameSync(staging, dest);
+        fire(dest); // one event, handled after both renames
+        // Exactly 1: the replaced directory is evaluated once; the old subtree is dropped, then b.txt is new.
+        expect(w.txId).to.equal(1);
+      });
+
       it("W13: restart does not rebuild the baseline", () => {
         fs.writeFileSync(path.join(sub, "a.txt"), "one");
         let calls = 0;

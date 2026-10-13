@@ -379,6 +379,118 @@ describe("ObservedState", () => {
         expect(state.isChanged(sibling)).to.be.false;
         expect(state.isChanged(path.join(d, "a.txt"))).to.be.true; // never seen again
       });
+
+      it("O38: a directory recorded without its children, then moved out, reports changed", () => {
+        const r = path.join(root, "r");
+        const staging = path.join(outside, "staging");
+        fs.mkdirSync(r);
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "a.txt"), "A");
+        const state = new ObservedState();
+        state.prime([r]);
+        const moved = path.join(r, "D");
+        fs.renameSync(staging, moved);
+        state.record(moved); // a suppressed self-write: marker only, children unrecorded
+        fs.renameSync(moved, path.join(outside, "D2"));
+        expect(state.isChanged(moved)).to.be.true;
+      });
+
+      describe("directory swapped by rename", () => {
+        const swapIn = (state: ObservedState, files: Record<string, string>): string => {
+          const r = path.join(root, "r");
+          const dir = path.join(r, "D");
+          fs.renameSync(dir, path.join(outside, "Dold"));
+          const staging = path.join(outside, "staging");
+          fs.mkdirSync(staging);
+          for (const [n, c] of Object.entries(files)) fs.writeFileSync(path.join(staging, n), c);
+          fs.renameSync(staging, dir);
+          return dir;
+        };
+        const setup = (): ObservedState => {
+          const dir = path.join(root, "r", "D");
+          fs.mkdirSync(dir, { recursive: true });
+          fs.writeFileSync(path.join(dir, "a.txt"), "A");
+          fs.writeFileSync(path.join(dir, "c.txt"), "C");
+          const state = new ObservedState();
+          state.prime([path.join(root, "r")]);
+          return state;
+        };
+
+        it("O39: one event on a directory swapped by two renames reports changed (added file; removal only)", () => {
+          const added = setup();
+          const dir = swapIn(added, { "a.txt": "A", "b.txt": "B" });
+          expect(added.isChanged(dir)).to.be.true;
+          fs.rmSync(path.join(root, "r"), { recursive: true, force: true });
+          fs.rmSync(path.join(outside, "Dold"), { recursive: true, force: true });
+          const removed = setup();
+          const dir2 = swapIn(removed, { "a.txt": "A" });
+          // a.txt is byte-identical: only the old subtree's drop (c.txt was live) can report this.
+          expect(removed.isChanged(dir2)).to.be.true;
+          expect(removed.isChanged(dir2)).to.be.false; // settled
+        });
+      });
+
+      it("O40: listing, reading, writing and deleting inside a primed directory keeps its identity", () => {
+        const state = new ObservedState();
+        state.prime([tree]);
+        fs.readdirSync(d);
+        fs.readFileSync(x);
+        const tmp = path.join(d, "tmp.txt");
+        fs.writeFileSync(tmp, "t");
+        fs.rmSync(tmp);
+        expect(state.isChanged(d)).to.be.false;
+      });
+
+      it("O41: evicting a directory's children then forgetting it leaves a consistent ledger", () => {
+        const y = path.join(d, "y.json");
+        fs.writeFileSync(y, "Y");
+        const state = new ObservedState({ maxEntries: 4 });
+        state.prime([tree]); // d, d/x.json, d/y.json
+        state.isChanged(d); // d is now most recent: x.json is the oldest
+        state.isChanged(path.join(tree, "q1"));
+        state.isChanged(path.join(tree, "q2")); // evicts x.json
+        state.forget(d);
+        expect(state.size).to.equal(2); // q1, q2: d and y.json gone, evicted x.json not resurrected
+        state.record(x);
+        expect(state.size).to.equal(3);
+        fs.renameSync(d, dOut);
+        // x.json is dropped (live, so changed); q1 and q2 are not dropped.
+        expect(state.isChanged(d)).to.be.true;
+        expect(state.size).to.equal(3); // q1, q2 and d's absent entry
+        fs.renameSync(dOut, d);
+        expect(state.isChanged(x)).to.be.true; // dropped, so re-evaluated
+      });
+
+      it("O42: children whose directory marker was evicted are still found by its move-out", () => {
+        const state = new ObservedState({ maxEntries: 4 });
+        state.prime([tree]); // d, d/x.json
+        state.isChanged(path.join(tree, "q1"));
+        state.isChanged(path.join(tree, "q2"));
+        state.isChanged(path.join(tree, "q3")); // evicts d (a marker)
+        state.isChanged(x); // keep x.json hot
+        fs.renameSync(d, dOut);
+        expect(state.isChanged(d)).to.be.true;
+        fs.renameSync(dOut, d);
+        // Had x.json survived the move-out it would still match "A" and report unchanged.
+        expect(state.isChanged(x)).to.be.true;
+      });
+
+      it("O43: a directory swapped while its marker was evicted is not matched against the old children", () => {
+        const c = path.join(d, "c.txt");
+        fs.writeFileSync(c, "C");
+        const state = new ObservedState({ maxEntries: 5 });
+        state.prime([tree]); // d, d/c.txt, d/x.json
+        state.isChanged(path.join(tree, "q1"));
+        state.isChanged(path.join(tree, "q2"));
+        state.isChanged(path.join(tree, "q3")); // evicts d (a marker), not lossy
+        state.isChanged(x); // keep both children hot
+        state.isChanged(c);
+        // Swap d for a directory holding only an identical x.json: c.txt is gone.
+        fs.renameSync(d, dOut);
+        fs.mkdirSync(d);
+        fs.writeFileSync(x, "A");
+        expect(state.isChanged(d)).to.be.true;
+      });
     });
   });
 
