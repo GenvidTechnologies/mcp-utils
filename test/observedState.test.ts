@@ -363,6 +363,22 @@ describe("ObservedState", () => {
         expect(state.isChanged(f)).to.be.true;
         expect(state.size).to.equal(before); // planted entry survived: no drop for a live file
       });
+
+      it("O37: forget(dir) removes the directory and every entry beneath it, but not a sibling", () => {
+        const sibling = path.join(tree, "dx.txt");
+        fs.mkdirSync(path.join(d, "nest"));
+        fs.writeFileSync(path.join(d, "a.txt"), "a");
+        fs.writeFileSync(path.join(d, "nest", "b.txt"), "b");
+        fs.writeFileSync(sibling, "s");
+        const state = new ObservedState();
+        state.prime([tree]);
+        const before = state.size;
+        state.forget(d);
+        // d, d/x.json, d/a.txt, d/nest, d/nest/b.txt are gone; the sibling dx.txt remains.
+        expect(state.size).to.equal(before - 5);
+        expect(state.isChanged(sibling)).to.be.false;
+        expect(state.isChanged(path.join(d, "a.txt"))).to.be.true; // never seen again
+      });
     });
   });
 
