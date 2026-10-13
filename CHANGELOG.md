@@ -16,7 +16,11 @@ This file starts at 0.6.0. For earlier versions see the
 - **`ObservedState.prime(roots)` and the exported `PrimeSummary` type.**
   `prime` walks the given directories and records a baseline — directories
   (and links to directories) as markers, files as fingerprints — filling gaps
-  only and never throwing. It returns `PrimeSummary`
+  only and never throwing. It never overwrites an existing entry, does not
+  descend into a path whose entry conflicts with the disk (the event path
+  reports it, failing open), and skips subtrees already primed by an earlier
+  call (so two watchers sharing one ledger cannot swallow each other's queued
+  events). It returns `PrimeSummary`
   (`{ files, directories, complete }`); `complete: false` means the ledger
   can no longer vouch for the primed tree (a read failed, or a real
   fingerprint was evicted).
@@ -25,7 +29,9 @@ This file starts at 0.6.0. For earlier versions see the
 
 - **`ObservedState` classifies directories, and `OptimisticWatcher.start()`
   primes a baseline, so read-only activity and directory events stop bumping
-  `txId`.** On Windows with last-access updates enabled, listing a directory
+  `txId` (given a complete baseline on a filesystem with inodes; on a lossy
+  ledger or a volume without inodes, directory events are re-evaluated and may
+  bump).** On Windows with last-access updates enabled, listing a directory
   or first-reading a file fired a watch event that read as a content change.
   Observable differences:
   - `record` no longer fingerprints a directory (or a link to one): it stores
@@ -47,10 +53,6 @@ This file starts at 0.6.0. For earlier versions see the
     path is always re-evaluated, so every directory event on such a volume
     bumps and costs a scan of the subtree (an extra bump, not a missed
     change; not measured, no such volume was available).
-  - `prime` reconciles an existing entry whose kind, identity or link flag
-    conflicts with the disk (for example a path recorded as a file that has
-    become a directory): it drops that entry's subtree and records what is
-    there. A same-kind, same-identity entry is still never overwritten.
   - A dropped link marker counts as a dropped live entry, so removing a
     directory that holds only a junction reads as changed, as removing the
     junction itself does. Keys have trailing slashes stripped (`D/` and `D`
@@ -59,7 +61,9 @@ This file starts at 0.6.0. For earlier versions see the
   - **Known limit:** a directory renamed out of the watched tree, edited
     outside it, and renamed back before the watcher handles the move-out
     event (for example in one synchronous block) reads as unchanged. It keeps
-    its identity and no file event arrives for the outside edit. If the
+    its identity and no file event arrives for the outside edit; its marker
+    still claims its children are known, so files added during the round trip
+    are not recorded until their own events arrive. If the
     move-out event is handled first, the change is caught. Closing it would
     mean re-hashing a directory's subtree on every directory event, which
     would undo the quiet read-only path; [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.

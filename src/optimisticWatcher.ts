@@ -55,7 +55,9 @@ export interface OptimisticWatcherOptions {
    *   is constructed automatically, so Layer 3 is **on by default**. The
    *   first `start()` synchronously walks and hashes the watched trees once
    *   (a baseline), so a first read-only event on a pre-existing file and
-   *   directory events don't bump. Size `maxEntries` to at least files plus
+   *   directory events don't bump (given a complete baseline on a filesystem
+   *   with inodes; otherwise directory events are re-evaluated and may bump,
+   *   failing open). Size `maxEntries` to at least files plus
    *   directories, or the baseline is incomplete (logged) and extra bumps
    *   result.
    *   A write landing between a consumer's own read of the tree and
@@ -121,8 +123,10 @@ export interface OptimisticWatcherOptions {
  *
  * The first `start()` synchronously walks and hashes the watched trees once
  * to seed the ledger (a baseline), after the watch handles are created. So a
- * first read-only event on a pre-existing file no longer bumps, and
- * directory events don't bump. A restart does not re-prime. Size
+ * first read-only event on a pre-existing file no longer bumps, and, given a
+ * complete baseline on a filesystem with inodes, directory events don't bump
+ * (otherwise they are re-evaluated and may bump, failing open). A restart
+ * does not re-prime. Size
  * `maxEntries` to at least files plus directories: otherwise the baseline is
  * incomplete (logged) and the watcher falls back to extra bumps.
  *

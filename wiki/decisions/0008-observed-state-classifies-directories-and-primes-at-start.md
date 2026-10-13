@@ -122,19 +122,38 @@ or reports changed. "An evicted path reports changed again" is therefore true
 of files; for a directory it is the scan or a changed report.
 
 **`prime(roots)` builds a baseline.** It walks the roots, recording directories
-and links as markers and files as fingerprints. It fills gaps only (an existing
-entry is never overwritten), never throws, and does not descend into links. The
+and links as markers and files as fingerprints. It fills gaps only, never throws, and does not descend into links. The
 ledger turns **lossy** when a directory cannot be read, a fingerprinter throws,
 or an eviction drops an entry holding a real fingerprint. Lossy never clears,
 and a lossy ledger stops vouching for never-seen directories. `PrimeSummary`
 reports `files`, `directories` and `complete`.
 
-`prime` also reconciles stale entries. An existing entry whose kind, identity
-or link flag conflicts with the disk (a path recorded as a file that became a
-directory while no watcher ran, on a ledger shared across watchers) has its
-subtree dropped and what is on disk recorded; otherwise a later move-out and
-move-back with identical content would read as unchanged. An entry of the same
-kind and identity is still never overwritten.
+`prime` never overwrites an existing entry, and never descends into a path
+whose entry conflicts with the disk: a file entry where there is now a
+directory, a marker where there is now a file, or a marker with a different
+identity or link flag. Those paths are left to the event path, which already
+reports them and fails open, so the cost is an extra bump, never a missed
+change. A same-kind, same-identity directory entry is still descended into to
+fill gaps.
+
+`prime` also skips any root that is equal to or beneath a root from an earlier
+`prime` call, and does not descend into a directory that is itself such a
+root. The reason is a ledger shared by two watchers, a documented reuse. While
+watcher A runs with an event still queued for a path, watcher B's `start()`
+primes the same tree and records that path's new state first; A's event then
+compares equal to the ledger and is swallowed. That happened for a file created
+between the two starts, and for a path that changed from file to directory.
+Those paths now belong to the first prime and to its events. A consumer sharing
+a ledger can expect the second watcher to add no baseline over a tree the first
+already primed, and so to rely on the first one's; it cannot expect the second
+`start()` to repair a baseline the first left incomplete.
+
+An earlier version also reconciled conflicting entries, dropping the stale
+subtree and recording what was on disk. That was dropped: it overwrote exactly
+the state a queued event on a shared ledger was about to compare against, which
+turned the shared-ledger case above from a gap into a swallowed change. The
+case it targeted came from `prime` descending into a directory recorded as a
+file, which no longer happens.
 
 A dropped link marker counts as a dropped live entry, so removing a directory
 that holds only a junction reads as changed, consistent with removing the
@@ -269,16 +288,19 @@ Alternatives weighed and rejected for the first-read part:
   (POSIX-normalized, trailing slashes stripped). A caller mixing spellings of
   one path, such as drive-letter case (`C:` versus `c:`) on Windows, gets
   separate keys and can miss a change. `OptimisticWatcher` uses one spelling
-  for priming and events, so this needs a caller that mixes spellings or two
-  watchers sharing a ledger. It is the pre-existing behaviour of a
-  string-keyed ledger.
+  for priming and events, so this needs a caller that mixes spellings. It is
+  the pre-existing behaviour of a string-keyed ledger. Sharing a ledger between
+  watchers is a separate matter, handled by `prime` skipping subtrees already
+  primed (see above).
 - **Known limit: a directory renamed out, edited, and renamed back reads as
   unchanged.** If a directory is renamed out of the watched tree, changed
   outside it (a file edited, added or removed), and renamed back to the same
   path before the watcher handles the move-out event (for example in one
   synchronous block, since `fs.watch` callbacks run afterwards), it keeps its
   inode. The same-identity rule skips any child comparison, and the edit
-  happened outside the root, so no file event arrives. If the move-out event
+  happened outside the root, so no file event arrives. The directory's marker
+  also still claims its children are known, so files added during the round
+  trip are not recorded until their own events arrive. If the move-out event
   is handled before the move-back, the change is caught (measured). Closing it
   would mean re-hashing a directory's subtree on every directory event, and
   on Windows listing a directory fires one, which is the read-only hot path
