@@ -74,8 +74,8 @@ This file starts at 0.6.0. For earlier versions see the
     created; a restart does not re-prime). Measured cost: about 12 ms for 49
     files, up to roughly 0.2-1.7 s for 1000 files of 32 KB (see ADR-0008).
   - **`forget(path)` now removes the path and every entry beneath it**
-    (previously only the key). A path that is a file or missing, whose stored
-    entry is not a live file, likewise drops everything beneath it on
+    (previously only the key). A path that is a file or missing likewise
+    drops everything beneath it, whatever its own stored entry is, on
     `isChanged` and `record`, so a directory that comes back under a
     different identity is re-evaluated rather than matched against orphaned
     child fingerprints (but see the known limit above for the same-identity

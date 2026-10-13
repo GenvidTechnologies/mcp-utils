@@ -104,8 +104,8 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * unless it lies under a `prime`d root, the ledger is not lossy and it is
  * not a link, in which case every file beneath it is evaluated and the
  * directory is changed only if one of them is. On a path that is now a file
- * or missing, whose stored entry is not a live file (a directory marker, an
- * `"absent"` entry, or nothing), all entries beneath it are dropped so a
+ * or missing, all entries beneath it are dropped, whatever its own stored
+ * entry is (a file has no children, so they can only be orphans), so a
  * directory later moved back in is re-evaluated rather than matched against
  * orphaned children; the path is changed if it is now a file, a dropped entry
  * was a live file, the ledger is lossy, or the marker was a link. `record`
@@ -318,7 +318,7 @@ export class ObservedState {
     if (kind === "file") {
       // Same orphan rule as isChanged: a directory that became a file or went
       // missing takes its descendants with it (silently — this is "accounted for").
-      if (!isLiveFile(prev)) this.dropBeneath(key);
+      this.dropBeneath(key);
       this.touch(key, { kind: "file", fp: this.fingerprint(filePath) });
       return;
     }
@@ -394,10 +394,12 @@ export class ObservedState {
     }
 
     const next = this.fingerprint(filePath);
-    // Descendants are orphans unless the stored entry is a live file (the
-    // O(1) ordinary-modify path). A directory marker may have been evicted or
-    // forgotten while its children survived, so prev === undefined drops too.
-    const droppedLive = isLiveFile(prev) ? false : this.dropBeneath(key);
+    // A file or missing path has no children, so anything indexed beneath it
+    // is an orphan: a directory marker evicted or forgotten while its children
+    // survived, or a stale file entry at a path that was a directory when its
+    // children were recorded. The parent index makes this O(1) when there is
+    // nothing beneath the path, which is the ordinary-modify case.
+    const droppedLive = this.dropBeneath(key);
     if (prev?.kind === "dir") {
       this.touch(key, { kind: "file", fp: next });
       // "absent" distinguishes a missing path from one that is now a file. An

@@ -135,7 +135,49 @@ describe("ObservedState", () => {
       expect(state.isChanged(D)).to.be.true;
     });
 
-    it("O47: a root passed with a trailing slash still vouches for a never-seen directory beneath it", () => {
+    it("O50: a first prime does not descend into a path recorded as a file that is now a directory", () => {
+      const r = path.join(root, "r");
+      const out = path.join(root, "out");
+      const D = path.join(r, "D");
+      fs.mkdirSync(r);
+      fs.mkdirSync(out);
+      fs.writeFileSync(D, "x");
+      const state = new ObservedState();
+      state.record(D); // recorded as a file, before any prime
+      fs.rmSync(D);
+      fs.mkdirSync(D);
+      fs.writeFileSync(path.join(D, "a.txt"), "A");
+      state.prime([r]);
+      // Move out and back with no event in between the prime and the move-out.
+      fs.renameSync(D, path.join(out, "D"));
+      expect(state.isChanged(D)).to.be.true;
+      fs.renameSync(path.join(out, "D"), D);
+      // Had prime recorded a.txt under the stale file entry, it would match here and read unchanged.
+      expect(state.isChanged(D)).to.be.true;
+    });
+
+    it("O51: a child recorded beneath a stale file entry is dropped when that path goes missing", () => {
+      const r = path.join(root, "r");
+      const out = path.join(root, "out");
+      const D = path.join(r, "D");
+      const a = path.join(D, "a.txt");
+      fs.mkdirSync(r);
+      fs.mkdirSync(out);
+      fs.writeFileSync(D, "x");
+      const state = new ObservedState();
+      state.prime([r]); // D recorded as a file
+      fs.rmSync(D);
+      fs.mkdirSync(D);
+      fs.writeFileSync(a, "A");
+      state.isChanged(a); // the child's own event arrives first and records it
+      fs.renameSync(D, path.join(out, "D")); // one event, for D
+      expect(state.isChanged(D)).to.be.true;
+      fs.renameSync(path.join(out, "D"), D);
+      // The orphaned a.txt must not vouch for the directory coming back.
+      expect(state.isChanged(D)).to.be.true;
+    });
+
+    it("O47:a root passed with a trailing slash still vouches for a never-seen directory beneath it", () => {
       const r = path.join(root, "r");
       const D = path.join(r, "D");
       fs.mkdirSync(r);
@@ -446,7 +488,7 @@ describe("ObservedState", () => {
         expect(state.isChanged(d)).to.be.true;
       });
 
-      it("O36: a modified known live file skips the descendant drop", () => {
+      it("O36: entries beneath a modified known file are orphans and are dropped", () => {
         const f = path.join(tree, "f.txt");
         fs.writeFileSync(f, "one");
         const state = new ObservedState({
@@ -457,7 +499,8 @@ describe("ObservedState", () => {
         const before = state.size;
         fs.writeFileSync(f, "two");
         expect(state.isChanged(f)).to.be.true;
-        expect(state.size).to.equal(before); // planted entry survived: no drop for a live file
+        // A file cannot have children, so the planted entry is an orphan and goes.
+        expect(state.size).to.equal(before - 1);
       });
 
       it("O37: forget(dir) removes the directory and every entry beneath it, but not a sibling", () => {

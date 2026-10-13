@@ -106,10 +106,12 @@ review found a missed change: a directory marker could leave the ledger
 had become a file or gone missing) while its children's entries survived.
 Moving that directory out and back in with identical files then scanned as
 "never seen", matched the orphaned fingerprints and read as unchanged. So
-when a path is a file or missing and its stored entry is not a live file
-(none, `"absent"`, or a directory marker), `isChanged` and `record` drop every
-entry beneath it, and `isChanged` reports changed if a dropped entry was a live
-file. An ordinary modify of a known live file skips the drop, so it stays O(1).
+when a path is a file or missing, `isChanged` and `record` drop every entry
+beneath it, whatever its own stored entry is, and `isChanged` reports changed
+if a dropped entry was a live file. A file has no children, so anything
+indexed beneath one is an orphan; that includes children recorded under a
+stale file entry at a path that had since become a directory. The parent
+index answers "nothing beneath" in O(1), so an ordinary modify stays O(1).
 `forget(path)` now removes the path and everything beneath it, an observable
 change from removing only the key.
 
