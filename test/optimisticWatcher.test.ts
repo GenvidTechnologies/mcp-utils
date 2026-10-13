@@ -701,6 +701,25 @@ describe("OptimisticWatcher", () => {
         expect(fs.existsSync(path.join(target, "keep.txt"))).to.equal(true);
       });
 
+      it("W18: a self-referencing directory link (ELOOP) created before start() bumps on every event", function () {
+        // Created before start() so the baseline walk meets it too; classify
+        // falls back to "file" (stat -> ELOOP) and the fingerprinter's unique
+        // error token makes every event differ from the last.
+        const link = path.join(sub, "self");
+        try {
+          fs.symlinkSync(link, link, linkType);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "ENOSYS") return this.skip();
+          throw e;
+        }
+        const { w, fire } = make();
+        w.start();
+        fire(link);
+        fire(link);
+        expect(w.txId).to.equal(2);
+      });
+
       it("W13: restart does not rebuild the baseline", () => {
         fs.writeFileSync(path.join(sub, "a.txt"), "one");
         let calls = 0;

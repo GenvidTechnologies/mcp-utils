@@ -295,6 +295,75 @@ describe("ObservedState", () => {
       fs.rmSync(link, { recursive: true });
       expect(state.isChanged(link)).to.be.true;
     });
+
+    describe("orphaned descendants", () => {
+      let tree: string;
+      let outside: string;
+      let d: string;
+      let dOut: string;
+      let x: string;
+
+      beforeEach(() => {
+        tree = path.join(root, "tree");
+        outside = path.join(root, "outside");
+        d = path.join(tree, "d");
+        dOut = path.join(outside, "d");
+        x = path.join(d, "x.json");
+        fs.mkdirSync(d, { recursive: true });
+        fs.mkdirSync(outside);
+        fs.writeFileSync(x, "A");
+      });
+
+      it("O33: forget(dir), then move out and back in with identical files, reports the move-in changed", () => {
+        const state = new ObservedState();
+        state.prime([tree]);
+        state.forget(d);
+        fs.renameSync(d, dOut);
+        state.isChanged(d); // move-out
+        fs.renameSync(dOut, d);
+        expect(state.isChanged(d)).to.be.true;
+      });
+
+      it("O34: a directory marker evicted without going lossy does not leave its children vouching for a move-in", () => {
+        const state = new ObservedState({ maxEntries: 3 });
+        expect(state.prime([tree]).complete).to.be.true; // d, d/x.json
+        state.isChanged(path.join(tree, "q1")); // absent entry
+        state.isChanged(path.join(tree, "q2")); // evicts d (a marker, so not lossy)
+        state.isChanged(x); // keep x.json hot
+        fs.renameSync(d, dOut);
+        state.isChanged(d); // move-out
+        fs.renameSync(dOut, d);
+        expect(state.isChanged(d)).to.be.true;
+      });
+
+      it("O35: record(dir) after the directory became a file drops its children", () => {
+        const state = new ObservedState();
+        state.prime([tree]);
+        fs.rmSync(d, { recursive: true, force: true });
+        fs.writeFileSync(d, "file now");
+        state.record(d); // self-write path
+        fs.rmSync(d);
+        expect(state.isChanged(d)).to.be.true; // the file is gone
+        fs.mkdirSync(dOut);
+        fs.writeFileSync(path.join(dOut, "x.json"), "A");
+        fs.renameSync(dOut, d);
+        expect(state.isChanged(d)).to.be.true;
+      });
+
+      it("O36: a modified known live file skips the descendant drop", () => {
+        const f = path.join(tree, "f.txt");
+        fs.writeFileSync(f, "one");
+        const state = new ObservedState({
+          fingerprint: (p) => (fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "absent"),
+        });
+        state.record(f);
+        state.record(f + "/below"); // cannot exist on disk; planted to observe the drop
+        const before = state.size;
+        fs.writeFileSync(f, "two");
+        expect(state.isChanged(f)).to.be.true;
+        expect(state.size).to.equal(before); // planted entry survived: no drop for a live file
+      });
+    });
   });
 
   describe("contentFingerprint", () => {

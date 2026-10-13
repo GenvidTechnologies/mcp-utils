@@ -20,6 +20,8 @@ const DEFAULT_MAX_ENTRIES = 1000;
 
 type Entry = { kind: "file"; fp: string } | { kind: "dir"; link: boolean };
 
+const isLiveFile = (e: Entry | undefined): boolean => e?.kind === "file" && e.fp !== "absent";
+
 let errorTokenCounter = 0;
 
 /**
@@ -36,8 +38,10 @@ let errorTokenCounter = 0;
  * reporting an *extra* change, never toward masking a real one — callers
  * built on this fingerprinter (see `ObservedState`) fail open, not closed.
  *
- * Called directly on a directory it still returns a unique token (`EISDIR`);
- * `ObservedState` itself never passes it a directory.
+ * Called directly on a directory it still returns a unique token (`EISDIR`).
+ * `ObservedState` does not pass it a directory it classified as one; if
+ * classification itself fails (`lstat` throws) the path is treated as a file
+ * and reaches the fingerprinter, which fails open.
  */
 export const contentFingerprint: Fingerprinter = (filePath) => {
   try {
@@ -63,21 +67,30 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * check and record happen atomically from the caller's perspective. A
  * path that has never been seen before is treated as changed.
  *
- * Directories (and links to directories) are stored as markers and never
- * reach the fingerprinter. `isChanged` on a path that is now a directory:
+ * Directories (and links to directories) are stored as markers and do not
+ * reach the fingerprinter (unless `lstat` itself fails, in which case the
+ * path is classified as a file and the fingerprinter fails open).
+ * `isChanged` on a path that is now a directory:
  * a known marker is unchanged (a dir/link flip is changed); a live file
  * replaced by a directory is changed; a never-seen directory is changed
  * unless it lies under a `prime`d root, the ledger is not lossy and it is
  * not a link, in which case every file beneath it is evaluated and the
  * directory is changed only if one of them is. On a path that is now a file
- * or missing, a stored directory marker drops all entries beneath it and is
- * changed if the path is now a file, a dropped entry was a live file, the
- * ledger is lossy, or the marker was a link.
+ * or missing, whose stored entry is not a live file (a directory marker, an
+ * `"absent"` entry, or nothing), all entries beneath it are dropped so a
+ * directory later moved back in is re-evaluated rather than matched against
+ * orphaned children; the path is changed if it is now a file, a dropped entry
+ * was a live file, the ledger is lossy, or the marker was a link. `record`
+ * and `forget` drop the same descendants.
  *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
- * long-lived recursive watch can't grow it unboundedly. An evicted path
- * simply reports changed again on its next event — the same fail-open
- * direction as `contentFingerprint`'s error handling.
+ * long-lived recursive watch can't grow it unboundedly. An evicted file
+ * reports changed again on its next event — the same fail-open direction as
+ * `contentFingerprint`'s error handling. An evicted directory marker is not
+ * itself a loss: the next event on a still-present directory is decided by the
+ * vouched scan (when under a `prime`d root, not lossy and not a link) or
+ * reports changed. Evicting a marker leaves its children until the directory's
+ * next move-out event drops them.
  */
 export class ObservedState {
   private entries = new Map<string, Entry>(); // normalized path → ledger entry
@@ -123,7 +136,10 @@ export class ObservedState {
     }
   }
 
-  /** True when `p` is a primed root or lies beneath one. Used to decide whether the ledger vouches for a directory. */
+  /**
+   * True when `p` is a primed root or lies beneath one. Used to decide whether the ledger vouches for a directory.
+   * A primed root of `/` builds the prefix `//` and never matches, so it fails open (never vouches).
+   */
   private isUnderPrimedRoot(p: string): boolean {
     const key = ObservedState.normalize(p);
     return this.primedRoots.some((r) => key === r || key.startsWith(r + "/"));
@@ -191,6 +207,9 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     const kind = this.classify(filePath);
     if (kind === "file") {
+      // Same orphan rule as isChanged: a directory that became a file or went
+      // missing takes its descendants with it (silently — this is "accounted for").
+      if (!isLiveFile(this.entries.get(key))) this.dropBeneath(key);
       this.touch(key, { kind: "file", fp: this.fingerprint(filePath) });
     } else {
       this.touch(key, { kind: "dir", link: kind === "dirlink" });
@@ -239,25 +258,40 @@ export class ObservedState {
     }
 
     const next = this.fingerprint(filePath);
+    // Descendants are orphans unless the stored entry is a live file (the
+    // O(1) ordinary-modify path). A directory marker may have been evicted or
+    // forgotten while its children survived, so prev === undefined drops too.
+    const droppedLive = isLiveFile(prev) ? false : this.dropBeneath(key);
     if (prev?.kind === "dir") {
-      const prefix = key.replace(/\/+$/, "") + "/";
-      let droppedLive = false;
-      for (const [k, e] of [...this.entries]) {
-        if (!k.startsWith(prefix)) continue;
-        if (e.kind === "file" && e.fp !== "absent") droppedLive = true;
-        this.entries.delete(k);
-      }
       this.touch(key, { kind: "file", fp: next });
       // "absent" distinguishes a missing path from one that is now a file.
       return next !== "absent" || droppedLive || this.lossy || prev.link;
     }
     this.touch(key, { kind: "file", fp: next });
-    return prev === undefined || prev.fp !== next;
+    return prev === undefined || prev.fp !== next || droppedLive;
   }
 
-  /** Remove a tracked path. */
+  /** Remove a tracked path and every entry beneath it. */
   forget(filePath: string): void {
-    this.entries.delete(ObservedState.normalize(filePath));
+    const key = ObservedState.normalize(filePath);
+    this.entries.delete(key);
+    this.dropBeneath(key);
+  }
+
+  /**
+   * Delete every entry whose key lies beneath `key` (trailing-slash
+   * normalized). Returns whether a live file (a real fingerprint) was dropped.
+   * Deleting the current key while iterating a Map is safe.
+   */
+  private dropBeneath(key: string): boolean {
+    const prefix = key.replace(/\/+$/, "") + "/";
+    let droppedLive = false;
+    for (const k of this.entries.keys()) {
+      if (!k.startsWith(prefix)) continue;
+      if (isLiveFile(this.entries.get(k))) droppedLive = true;
+      this.entries.delete(k);
+    }
+    return droppedLive;
   }
 
   /** Number of currently tracked entries (for testing). */

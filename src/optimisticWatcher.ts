@@ -57,7 +57,10 @@ export interface OptimisticWatcherOptions {
    *   (a baseline), so a first read-only event on a pre-existing file and
    *   directory events don't bump. Size `maxEntries` to at least files plus
    *   directories, or the baseline is incomplete (logged) and extra bumps
-   *   result, never a missed change.
+   *   result.
+   *   A write landing between a consumer's own read of the tree and
+   *   `start()` is part of the baseline and is not reported — start the
+   *   watcher before reading the tree.
    * - `null` — Layer 3 is disabled (opt out), restoring the pre-Layer-3
    *   behavior: every event not suppressed by L1/L2 bumps, including
    *   directory events and first-read access-time events; no baseline.
@@ -121,8 +124,11 @@ export interface OptimisticWatcherOptions {
  * first read-only event on a pre-existing file no longer bumps, and
  * directory events don't bump. A restart does not re-prime. Size
  * `maxEntries` to at least files plus directories: otherwise the baseline is
- * incomplete (logged) and the watcher falls back to extra bumps, never to a
- * missed change.
+ * incomplete (logged) and the watcher falls back to extra bumps.
+ *
+ * Start the watcher before reading the tree: a write that lands between a
+ * consumer's own read and `start()` is part of the baseline and is not
+ * reported.
  *
  * Pass `observed: null` to disable Layer 3 entirely and restore pre-Layer-3
  * behavior: every event not suppressed by L1/L2 bumps `txId`, explicitly
