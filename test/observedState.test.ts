@@ -479,7 +479,10 @@ describe("ObservedState", () => {
         state.prime([tree]);
         fs.rmSync(d, { recursive: true, force: true });
         fs.writeFileSync(d, "file now");
+        const before = state.size;
         state.record(d); // self-write path
+        // d becomes a file entry; its one child (x.json) is dropped by record itself.
+        expect(state.size).to.equal(before - 1);
         fs.rmSync(d);
         expect(state.isChanged(d)).to.be.true; // the file is gone
         fs.mkdirSync(dOut);
