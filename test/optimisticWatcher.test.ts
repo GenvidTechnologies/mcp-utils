@@ -755,6 +755,44 @@ describe("OptimisticWatcher", () => {
         expect(w.txId).to.equal(1);
       });
 
+      // Two watchers share one ledger; A's raw events are held back and delivered by hand.
+      const twoWatchers = () => {
+        const shared = new ObservedState();
+        const fa = makeFakeFactory();
+        const fb = makeFakeFactory();
+        const mk = (f: ReturnType<typeof makeFakeFactory>) =>
+          new OptimisticWatcher({
+            watchDirs: [tmpDir],
+            expected: new ExpectedChanges(),
+            observed: shared,
+            watcherFactory: f.factory,
+          });
+        return { a: mk(fa), b: mk(fb), deliverToA: (p: string) => fa.fireAll(fp(p)) };
+      };
+
+      it("W21: a file turned directory after A started is still reported when B starts first", () => {
+        const P = path.join(sub, "P");
+        fs.writeFileSync(P, "file-v1");
+        const { a, b, deliverToA } = twoWatchers();
+        a.start();
+        fs.rmSync(P);
+        fs.mkdirSync(P);
+        fs.writeFileSync(path.join(P, "g.txt"), "G");
+        b.start(); // shares the ledger; must not record P's new state
+        deliverToA(P);
+        expect(a.txId).to.equal(1);
+      });
+
+      it("W22: a file created after A started is still reported when B starts first", () => {
+        const { a, b, deliverToA } = twoWatchers();
+        a.start();
+        const Q = path.join(sub, "Q.txt");
+        fs.writeFileSync(Q, "new");
+        b.start();
+        deliverToA(Q);
+        expect(a.txId).to.equal(1);
+      });
+
       it("W13: restart does not rebuild the baseline", () => {
         fs.writeFileSync(path.join(sub, "a.txt"), "one");
         let calls = 0;

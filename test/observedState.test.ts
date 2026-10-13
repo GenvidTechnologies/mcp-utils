@@ -112,7 +112,7 @@ describe("ObservedState", () => {
       }
     }
 
-    it("O44: prime reconciles a path recorded as a file that is now a directory", () => {
+    it("O44: prime leaves a stale file entry at a path that is now a directory to the event path", () => {
       const r = path.join(root, "r");
       const out = path.join(root, "out");
       const D = path.join(r, "D");
@@ -126,10 +126,60 @@ describe("ObservedState", () => {
       fs.mkdirSync(D);
       fs.writeFileSync(path.join(D, "a.txt"), "A");
       state.prime([r]);
-      expect(state.isChanged(D)).to.be.false; // recorded as the directory it is now
+      // prime neither overwrote the file entry nor descended into D, so the event path sees a
+      // live file replaced by a directory: an extra bump (fail-open), not a silent baseline.
+      expect(state.isChanged(D)).to.be.true;
       fs.renameSync(D, path.join(out, "D"));
       state.isChanged(D);
       fs.renameSync(path.join(out, "D"), D);
+      expect(state.isChanged(D)).to.be.true;
+    });
+
+    it("O47: a root passed with a trailing slash still vouches for a never-seen directory beneath it", () => {
+      const r = path.join(root, "r");
+      const D = path.join(r, "D");
+      fs.mkdirSync(r);
+      const state = new ObservedState();
+      state.prime([r + "/"]);
+      fs.mkdirSync(D);
+      fs.writeFileSync(path.join(D, "a.txt"), "A");
+      state.record(path.join(D, "a.txt"));
+      // Vouched: the scan finds only an already-accounted file. An unvouched directory is always changed.
+      expect(state.isChanged(D)).to.be.false;
+    });
+
+    it("O48: prime skips a subtree already under a primed root", () => {
+      const r = path.join(root, "r");
+      const sub = path.join(r, "sub");
+      fs.mkdirSync(sub, { recursive: true });
+      fs.writeFileSync(path.join(root, "top.txt"), "t");
+      const state = new ObservedState();
+      state.prime([sub]);
+      const late = path.join(sub, "late.txt");
+      fs.writeFileSync(late, "L"); // no event: another owner's queued event must still see it as new
+      state.prime([sub]); // the same root again
+      expect(state.isChanged(late)).to.be.true;
+      const late2 = path.join(sub, "late2.txt");
+      fs.writeFileSync(late2, "L2");
+      const summary = state.prime([root]); // an ancestor: sub is not descended into
+      expect(summary.files).to.equal(1); // top.txt only
+      expect(state.isChanged(late2)).to.be.true;
+      expect(state.isChanged(path.join(root, "top.txt"))).to.be.false;
+    });
+
+    it("O49: prime leaves a directory marker whose identity no longer matches the disk", () => {
+      const r = path.join(root, "r");
+      const D = path.join(r, "D");
+      const X = path.join(root, "X");
+      fs.mkdirSync(D, { recursive: true });
+      fs.mkdirSync(X);
+      fs.writeFileSync(path.join(X, "a.txt"), "A");
+      const state = new ObservedState();
+      state.record(D);
+      fs.renameSync(D, path.join(root, "Dold"));
+      fs.renameSync(X, D);
+      state.prime([r]);
+      // Untouched marker: the event path sees a different directory and reports it.
       expect(state.isChanged(D)).to.be.true;
     });
 

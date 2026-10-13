@@ -111,6 +111,12 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * was a live file, the ledger is lossy, or the marker was a link. `record`
  * and `forget` drop the same descendants.
  *
+ * `prime` fills gaps only: it never overwrites an entry, never descends into a
+ * path whose entry conflicts with the disk (a different kind, identity or link
+ * flag — the event path reports those and fails open), and skips any subtree
+ * already under a root from an earlier `prime` call, which belongs to whoever
+ * primed it and to that owner's queued events.
+ *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
  * long-lived recursive watch can't grow it unboundedly. An evicted file
  * reports changed again on its next event — the same fail-open direction as
@@ -214,79 +220,87 @@ export class ObservedState {
 
   /**
    * True when `p` is a primed root or lies beneath one. Used to decide whether the ledger vouches for a directory.
-   * A primed root of `/` builds the prefix `//` and never matches, so it fails open (never vouches).
+   * A root that already ends in a separator (a bare "/" or a drive root "C:/", the only keys `normalize` leaves
+   * with one) is its own prefix; any other root gets "/" appended.
    */
   private isUnderPrimedRoot(p: string): boolean {
     const key = ObservedState.normalize(p);
-    return this.primedRoots.some((r) => key === r || key.startsWith(r + "/"));
+    return this.primedRoots.some((r) => key === r || key.startsWith(r.endsWith("/") ? r : r + "/"));
   }
 
   /**
    * Walks `roots` recursively and records a baseline: directories (and links
    * to directories, which are not descended into) as markers, files as
-   * fingerprints. Fills gaps only — an entry of the same kind (and, for a
-   * directory, the same identity) is never overwritten; one whose kind or
-   * identity no longer matches the disk is dropped with its subtree and
-   * re-recorded. Never throws: a directory that cannot be read, or a
-   * fingerprinter that throws, marks the ledger incomplete and the walk
-   * continues. A missing root counts as empty. The roots themselves get no
-   * marker. `complete: false` means the ledger can no longer vouch; size
-   * `maxEntries` to at least files plus directories.
+   * fingerprints. Fills gaps only, and only where nothing else has spoken:
+   * - an existing entry is never overwritten;
+   * - a path whose existing entry conflicts with the disk (a file entry where
+   *   there is now a directory, a directory marker where there is now a file,
+   *   or a marker with a different identity or link flag) is left alone and not
+   *   descended into — the event path reports it and fails open;
+   * - a root that is equal to or beneath a root from an earlier `prime` call
+   *   (typically another watcher sharing this ledger, which owns those paths
+   *   and their queued events) is skipped, and a directory that is itself such
+   *   a root is not descended into. The root is still recorded as primed.
+   * Never throws: a directory that cannot be read, or a fingerprinter that
+   * throws, marks the ledger incomplete and the walk continues. A missing root
+   * counts as empty. The roots themselves get no marker. The summary counts
+   * only what this call added. `complete: false` means the ledger can no
+   * longer vouch; size `maxEntries` to at least files plus directories.
    */
   prime(roots: string[]): PrimeSummary {
     const summary: PrimeSummary = { files: 0, directories: 0, complete: true };
     for (const root of roots) {
       const key = ObservedState.normalize(root);
-      if (!this.primedRoots.includes(key)) this.primedRoots.push(key);
-      this.walk(root, summary);
+      if (this.isUnderPrimedRoot(root)) continue;
+      const earlier = new Set(this.primedRoots);
+      this.primedRoots.push(key);
+      this.walk(root, summary, earlier);
     }
     summary.complete = !this.lossy;
     return summary;
   }
 
-  private walk(dir: string, summary: PrimeSummary): void {
+  /** Returns false when `dir` could not be listed (it vanished, or the read failed). */
+  private walk(dir: string, summary: PrimeSummary, earlier: Set<string>): boolean {
     let names: string[];
     try {
       names = readdirSync(dir, { withFileTypes: true }).map((d) => d.name);
     } catch (err) {
       if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") this.lossy = true;
-      return;
+      return false;
     }
     for (const name of names) {
       const full = path.join(dir, name);
       const key = ObservedState.normalize(full);
       try {
         const { kind, id } = this.classify(full);
-        let prev = this.entries.get(key);
-        // A same-kind entry (same identity, for a directory) is never overwritten;
-        // one whose kind or identity no longer matches the disk is stale: drop it
-        // and its subtree, then record what is there.
+        const prev = this.entries.get(key);
         const link = kind === "dirlink";
-        if (
-          prev !== undefined &&
-          (kind === "file"
-            ? prev.kind !== "file"
-            : prev.kind !== "dir" || prev.id !== id || prev.link !== link)
-        ) {
-          this.dropBeneath(key);
-          prev = undefined;
-        }
-        const exists = prev !== undefined;
         if (kind === "file") {
-          if (exists) continue;
+          if (prev !== undefined) continue; // never overwrite; a conflicting dir marker is left to its event
           this.touch(key, { kind: "file", fp: this.fingerprint(full) });
           summary.files++;
+          continue;
+        }
+        if (prev !== undefined) {
+          // Same kind and identity: fill gaps beneath it. Anything else conflicts: leave it entirely.
+          if (prev.kind !== "dir" || prev.id !== id || prev.link !== link) continue;
         } else {
-          if (!exists) {
-            this.touch(key, { kind: "dir", link, id, scanned: true });
-            summary.directories++;
+          this.touch(key, { kind: "dir", link, id, scanned: true });
+          summary.directories++;
+        }
+        if (kind === "dir" && !earlier.has(key)) {
+          if (!this.walk(full, summary, earlier) && prev === undefined) {
+            // The children were never recorded, so the marker we just added must not claim they were.
+            const added = this.entries.get(key);
+            if (added?.kind === "dir") added.scanned = false;
           }
-          if (kind === "dir") this.walk(full, summary);
         }
       } catch {
         this.lossy = true;
       }
     }
+    return true;
   }
 
   /**
