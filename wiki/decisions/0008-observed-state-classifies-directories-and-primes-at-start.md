@@ -60,15 +60,45 @@ open.
 
 | Stored entry | Result |
 |---|---|
-| directory marker | unchanged; a directory-to-link or link-to-directory flip is **changed** |
+| directory marker with the same identity | unchanged |
+| directory marker with a different identity, or a directory/link flip | the old subtree is dropped, then evaluated as in the last row; **changed** if a live file was dropped or the kind flipped |
 | live file | changed (a file was replaced by a directory) |
 | none, or recorded absent | changed, unless the path lies under a primed root, the ledger is not lossy and it is not a link; then every file beneath it is evaluated and the directory is changed only if one of them is |
 
 On a path that is now a file or missing, a stored directory marker drops every
 entry beneath it, and the result is changed if the path is now a file, a
-dropped entry was a live file, the ledger is lossy, or the marker was a link.
-The directory/link flip rule was added during implementation rather than
-designed up front; it fails toward an extra bump.
+dropped entry was a live file, the ledger is lossy, the marker was a link, or
+the marker was not `scanned`. The directory/link flip rule was added during
+implementation rather than designed up front; it fails toward an extra bump.
+
+**A marker stores identity and a `scanned` flag.** Code review found two more
+routes to a missed change, and each needed state the first design lacked.
+
+- *A directory swapped by rename.* Two renames that replace a directory, with
+  the events handled after both (classification sees only the final state),
+  left a known marker on a path that was still a directory, which read as
+  unchanged. The marker now stores the directory's identity: its inode from
+  the `lstat` that classification already makes. Only a marker with the same
+  identity is unchanged; a different one drops the old subtree and evaluates
+  the new directory like a never-seen one. An inode of 0 means unknown and
+  never matches, so a filesystem without usable inodes re-evaluates every time
+  and fails toward an extra bump.
+- *A directory moved in by a self-write.* Layers 1 and 2 `record()` every
+  suppressed path, and `record()` stored a directory without its children. An
+  atomic install that renames a staging directory into place inside
+  `suppress()` therefore left a childless marker, and moving it out later
+  dropped nothing live and read as unchanged. A marker now has a `scanned`
+  flag, true when its children are known: created by `prime`, by a vouched
+  scan, or the directory was empty when recorded. An unscanned marker whose
+  directory goes missing or becomes a file reports changed.
+- *Nothing to compare against.* With no marker (never seen, or evicted while
+  its children survived), the vouched scan now also drops recorded files it
+  did not find and reports that as a change; otherwise a swap that removed a
+  file while the marker was evicted would match the surviving fingerprints.
+
+Entries are indexed by parent, so dropping a subtree walks that subtree rather
+than the whole ledger. Without the index each new-file event scanned every
+entry.
 
 **Descendants are dropped whenever a path stops being a live file.** Code
 review found a missed change: a directory marker could leave the ledger
@@ -156,6 +186,12 @@ the "after" figures were re-measured with the shipped code.
 | move a non-empty directory out | 1 | 1 |
 | create a junction in the tree | 4 | 1 |
 
+Directory identity, measured on the same machine (Windows 11, NTFS) with a
+throwaway probe: a directory's inode stays the same across listing it, reading
+files in it, and writing or deleting files in it; a directory renamed into
+place has a different inode; a directory renamed elsewhere keeps its inode.
+Linux and macOS were not measured.
+
 `start()` now costs a synchronous walk and hash (first run on a newly written
 tree / second run): 1000 files of 2 KB, 170 / 134 ms; 1000 of 32 KB, 1709 /
 216 ms; 5000 of 2 KB, 705 / 585 ms; this repo's `src`, `test` and `wiki` (49
@@ -207,8 +243,17 @@ Alternatives weighed and rejected for the first-read part:
   ledger entry and fall back to never-seen bumps, which fails open.
 - **Event loss on OS buffer overflow is a pre-existing gap**, not addressed
   here.
-- **Linux and macOS directory-event shapes were not measured.** The design
-  classifies the path when the event is handled, so it does not depend on them.
+- **Linux and macOS directory-event shapes were not measured**, nor was their
+  inode behaviour. The design classifies the path when the event is handled, so
+  it does not depend on event shapes. Where inodes are absent the identity is
+  unknown and the path is re-evaluated each time, which costs extra bumps.
+- **Known limit: identity is only as good as the filesystem's inode reuse.** A
+  filesystem that hands a deleted directory's inode straight to a directory
+  created in its place would let a swapped-in directory pass as the recorded
+  one. That is plausible on filesystems that recycle inode numbers eagerly,
+  but it was not measured on any filesystem here. The swap is caught only
+  when the inode differs, so this is a limit of the check, not a claim that it
+  occurs.
 
 ## Related
 

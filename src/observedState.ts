@@ -383,11 +383,6 @@ export class ObservedState {
   }
 
   /**
-   * Delete every entry beneath `key` (trailing-slash normalized), found
-   * through the parent index, so the cost is the subtree rather than the
-   * ledger. Returns whether a live file (a real fingerprint) was dropped.
-   */
-  /**
    * Remove the file entries beneath `key` that are not in `found` (the files a
    * scan just saw there). Returns whether any of them was a live file.
    * Directory markers beneath `key` are left to their own events.
@@ -412,6 +407,11 @@ export class ObservedState {
     return droppedLive;
   }
 
+  /**
+   * Delete every entry beneath `key` (trailing-slash normalized), found
+   * through the parent index, so the cost is the subtree rather than the
+   * ledger. Returns whether a live file (a real fingerprint) was dropped.
+   */
   private dropBeneath(key: string): boolean {
     let root = key.replace(/\/+$/, "");
     if (root === "" && key !== "") root = "/";

@@ -33,9 +33,20 @@ This file starts at 0.6.0. For earlier versions see the
     `lstat` itself fails, in which case the path is treated as a file and the
     fingerprinter fails open).
   - `isChanged` on a recorded directory is no longer always `true`; it is
-    `false` while the directory is unchanged. A never-seen directory still
-    reports `true` unless it lies under a `prime`d root on a non-lossy ledger,
-    where its files decide.
+    `false` while it is the same directory. A directory marker stores the
+    directory's identity (its `lstat` inode; unknown never matches) and a
+    `scanned` flag (its children are known: from `prime`, a vouched scan, or
+    empty at `record` time). A different directory swapped in by rename drops
+    the old subtree and is evaluated like a never-seen one, and an unscanned
+    directory that goes missing reports `true` (e.g. one moved in by a
+    self-write, which `record`s it without its children). A never-seen
+    directory still reports `true` unless it lies under a `prime`d root on a
+    non-lossy ledger, where its files decide; with no marker to compare, that
+    scan also drops recorded files it did not find and reports the change.
+    On a filesystem without inode numbers the identity is unknown and the
+    path is always re-evaluated (an extra bump, never a missed change).
+  - Entries are indexed by parent, so dropping a subtree costs that subtree
+    rather than the whole ledger.
   - `OptimisticWatcher.start()` now **synchronously walks and hashes the
     watched trees once** (once per instance, after the watch handles are
     created; a restart does not re-prime). Measured cost: about 12 ms for 49
