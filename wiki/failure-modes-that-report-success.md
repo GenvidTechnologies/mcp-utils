@@ -355,7 +355,10 @@ first question: this check emphatically did run.
 one. Before trusting a rename inventory, ask what the moved file *points at*,
 not only what points at it — then let a resolver that doesn't care about
 strings arbitrate. Here `scanBrokenLinks` resolves against the filesystem, so
-it found all five regardless of their spelling. Prefer a tool that checks the
+it found all five regardless of their spelling. (That scanner no longer reads
+`wiki/` pages — since ADR-0053 it declines bundle content — so for a page
+inside the bundle the resolver to reach for is `/gvt-dev:maintain-wiki lint`,
+whose `wiki-lint.mjs` resolves links against the bundle root.) Prefer a tool that checks the
 property you care about (does this link resolve?) over one that checks a proxy
 for it (does this line contain the old path?).
 

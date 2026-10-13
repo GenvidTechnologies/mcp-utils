@@ -20,8 +20,11 @@ sources:
 # Wiki Maintenance Schema
 
 > Project conventions consumed by `/gvt-dev:maintain-wiki`. This repo keeps it
-> at `wiki/wiki-schema.md`, inside the bundle, rather than the plugin's default
-> `docs/wiki-schema.md` — see ADR-0004. This is the **maintenance
+> at `wiki/wiki-schema.md`, inside the bundle — see ADR-0004. That is not the
+> plugin's default name: as of gvt-dev 4.34.0 the default is
+> `<wikiDir>/schema.md`, with the legacy `docs/wiki-schema.md` still honoured,
+> so it is `.gvt-agent.json`'s `paths['docs/wiki-schema.md']` override that
+> points the skill (and `run-retro`'s wiki probe) here. This is the **maintenance
 > schema** for the three-tier wiki: `raw/` (immutable captured sources) →
 > `<wikiDir>/` (LLM-maintained pages, `index.md`, `log.md`) → this schema (the rules
 > that govern how the first two are kept in sync).
