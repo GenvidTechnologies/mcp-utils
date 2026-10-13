@@ -30,8 +30,9 @@ This record **refines** [ADR-0002](0002-observed-state-collapses-duplicate-watch
 it does not supersede it. What ADR-0002 decided still holds: the default
 fingerprint is a content hash (never `size`+`mtime`), L1 and L2 suppressions
 also `record()` into the ledger, an unreadable file produces a unique token so
-it fails open, and every failure degrades toward an extra bump, never toward
-staleness. This record adds two things ADR-0002 did not cover.
+it fails open, and every failure degrades toward an extra bump rather than
+toward staleness (the pre-`start()` window below excepted). This record adds
+two things ADR-0002 did not cover.
 
 On Windows with last-access updates enabled, a recursive `fs.watch` reports
 events that are not content changes:
@@ -51,7 +52,9 @@ read-only tool moved `txId`.
 first. A directory is a `dir` marker. A symlink or junction that resolves to a
 directory is a `dir` marker flagged as a link. Anything else, including any
 error while classifying, falls back to "file", so the fingerprinter is what
-fails open. No `Fingerprinter` is ever called with a directory.
+fails open. So a `Fingerprinter` is not called with a directory, except when
+`lstat` itself fails: the path then reaches the fingerprinter, which fails
+open.
 
 `isChanged` on a path that is now a directory:
 
@@ -66,6 +69,27 @@ entry beneath it, and the result is changed if the path is now a file, a
 dropped entry was a live file, the ledger is lossy, or the marker was a link.
 The directory/link flip rule was added during implementation rather than
 designed up front; it fails toward an extra bump.
+
+**Descendants are dropped whenever a path stops being a live file.** Code
+review found a missed change: a directory marker could leave the ledger
+(`forget(dir)`, LRU eviction of the marker, or `record()` of a directory that
+had become a file or gone missing) while its children's entries survived.
+Moving that directory out and back in with identical files then scanned as
+"never seen", matched the orphaned fingerprints and read as unchanged. So
+when a path is a file or missing and its stored entry is not a live file
+(none, `"absent"`, or a directory marker), `isChanged` and `record` drop every
+entry beneath it, and `isChanged` reports changed if a dropped entry was a live
+file. An ordinary modify of a known live file skips the drop, so it stays O(1).
+`forget(path)` now removes the path and everything beneath it, an observable
+change from removing only the key.
+
+Evicting a directory marker deliberately does **not** set the ledger lossy: a
+marker holds no content, and lossy would make every later directory scan
+unvouched. Staleness is still prevented because the orphaned children are
+dropped by the next file-or-missing event on that path, and the next event on a
+still-present directory is decided by the scan (when the ledger vouches for it)
+or reports changed. "An evicted path reports changed again" is therefore true
+of files; for a directory it is the scan or a changed report.
 
 **`prime(roots)` builds a baseline.** It walks the roots, recording directories
 and links as markers and files as fingerprints. It fills gaps only (an existing
@@ -91,7 +115,7 @@ detect a file replaced by a directory, because every event for that path
 already reads as a directory when it is delivered.
 
 **`maxEntries` stays at 1000.** Size it to at least files plus directories. An
-incomplete baseline is logged and degrades to today's extra bumps, never to a
+incomplete baseline is logged and degrades to today's extra bumps rather than a
 missed change. There is no `prime: false` option. Adding an option or raising
 the default later is additive, and consumers' tree sizes are unknown.
 
@@ -105,6 +129,13 @@ every event already classified as a directory. Each would be a missed change.
 The ledger has to remember what was beneath a directory to report these.
 
 ### Measurements
+
+This table is a subset: 10 of the 18 scenarios measured. The other eight (a
+nested read, deleting a file, `rm -r` of a non-empty directory, a directory
+replaced by a file, moving an empty directory in, renaming a directory within
+the tree, a self-write via `expect()`, reading through a junction) measured 0
+or 1, except the rename, which measured 2 as expected: one directory leaving
+and one arriving.
 
 Measured on one Windows machine (Windows 11, Node 24.11.1, last-access updates
 enabled), real watcher, default `fs.watch` factory, aged tree, two runs
@@ -162,6 +193,12 @@ Alternatives weighed and rejected for the first-read part:
 
 - **`start()` does a synchronous walk-and-hash** of every watched tree, once per
   instance. See the measurements above for cost.
+- **A write between a consumer's own read of the tree and `start()` is not
+  reported.** It becomes part of the baseline. Start the watcher before reading
+  the tree.
+- **A never-seen directory under a primed root is scanned on the event path.**
+  Its files are hashed synchronously when the event arrives, at a cost
+  proportional to that subtree and separate from the `start()` cost.
 - **Observable output changes, so this ships as a minor bump, 0.11.0.** A
   `^0.10.0` caret resolves as `>=0.10.0 <0.11.0` and does not reach it;
   consumers widen their range deliberately.

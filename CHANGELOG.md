@@ -29,7 +29,9 @@ This file starts at 0.6.0. For earlier versions see the
   or first-reading a file fired a watch event that read as a content change.
   Observable differences:
   - `record` no longer fingerprints a directory (or a link to one): it stores
-    a marker, and no `Fingerprinter` is ever called with a directory.
+    a marker, and no `Fingerprinter` is called with a directory (unless
+    `lstat` itself fails, in which case the path is treated as a file and the
+    fingerprinter fails open).
   - `isChanged` on a recorded directory is no longer always `true`; it is
     `false` while the directory is unchanged. A never-seen directory still
     reports `true` unless it lies under a `prime`d root on a non-lossy ledger,
@@ -38,7 +40,14 @@ This file starts at 0.6.0. For earlier versions see the
     watched trees once** (once per instance, after the watch handles are
     created; a restart does not re-prime). Measured cost: about 12 ms for 49
     files, up to roughly 0.2-1.7 s for 1000 files of 32 KB (see ADR-0008).
+  - **`forget(path)` now removes the path and every entry beneath it**
+    (previously only the key). A path that is a file or missing, whose stored
+    entry is not a live file, likewise drops everything beneath it on
+    `isChanged` and `record`, so a directory moved out and back in is
+    re-evaluated rather than matched against orphaned child fingerprints.
   - A first event on a pre-existing file no longer bumps `txId`.
+  - The scan of a never-seen directory under a primed root hashes its files
+    synchronously on the event path, at a cost proportional to that subtree.
   - A throwing custom `Fingerprinter` no longer throws out of an L1/L2
     suppression's ledger `record`; it fails open as before.
   - `observed: null` is unchanged: every event not suppressed by L1/L2 bumps,
@@ -47,8 +56,12 @@ This file starts at 0.6.0. For earlier versions see the
 
   **Size `maxEntries` to at least files plus directories.** Otherwise the
   baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls
-  back to extra bumps, never to a missed change. Rationale and rejected
-  alternatives: [ADR-0008](wiki/decisions/0008-observed-state-classifies-directories-and-primes-at-start.md).
+  back to extra bumps rather than a missed change.
+
+  **Start the watcher before reading the tree.** A write that lands between a
+  consumer's own read and `start()` becomes part of the baseline and is not
+  reported. Rationale and rejected alternatives:
+  [ADR-0008](wiki/decisions/0008-observed-state-classifies-directories-and-primes-at-start.md).
 
   **Shipping as 0.11.0, a minor bump, not a patch — and consumers pinned at
   `^0.10.0` will *not* pick this up automatically.** Below 1.0.0 a caret pin
