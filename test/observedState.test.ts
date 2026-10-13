@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ObservedState, contentFingerprint, type Fingerprinter } from "../src/observedState.js";
+import { toPosixPath } from "../src/strings.js";
 
 describe("ObservedState", () => {
   it("isChanged on a never-seen path returns true", () => {
@@ -87,6 +88,211 @@ describe("ObservedState", () => {
       }
       const state = new ObservedState();
       expect(state.isChanged(link)).to.be.true;
+      expect(state.isChanged(link)).to.be.true;
+    });
+  });
+
+  describe("directory classification", () => {
+    let root: string;
+
+    beforeEach(() => {
+      root = fs.mkdtempSync(path.join(os.tmpdir(), "obs-dir-"));
+    });
+    afterEach(() => {
+      fs.rmSync(root, { recursive: true, force: true });
+    });
+
+    function mkLink(target: string, link: string, ctx: Mocha.Context): void {
+      try {
+        fs.symlinkSync(target, link, process.platform === "win32" ? "junction" : "dir");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") ctx.skip();
+        throw err;
+      }
+    }
+
+    it("O12: the fingerprinter is never called with a directory path", () => {
+      const dir = path.join(root, "d");
+      const nested = path.join(root, "d", "n");
+      fs.mkdirSync(nested, { recursive: true });
+      fs.writeFileSync(path.join(nested, "f.txt"), "x");
+      const called: string[] = [];
+      const state = new ObservedState({
+        fingerprint: (p) => {
+          called.push(p);
+          return "fp";
+        },
+      });
+      state.record(dir);
+      state.isChanged(dir);
+      state.prime([root]);
+      const dirs = new Set([dir, nested, root].map((d) => toPosixPath(d)));
+      expect(called.filter((p) => dirs.has(toPosixPath(p)))).to.have.length(0);
+      expect(called).to.have.length.greaterThan(0); // the file was fingerprinted
+    });
+
+    it("O20: a known directory marker reports unchanged", () => {
+      const dir = path.join(root, "d");
+      fs.mkdirSync(dir);
+      const state = new ObservedState();
+      state.record(dir);
+      expect(state.isChanged(dir)).to.be.false;
+      expect(state.isChanged(dir)).to.be.false;
+    });
+
+    it("O21: a live file replaced by a directory reports changed", () => {
+      const p = path.join(root, "thing");
+      fs.writeFileSync(p, "x");
+      const state = new ObservedState();
+      state.record(p);
+      fs.rmSync(p);
+      fs.mkdirSync(p);
+      expect(state.isChanged(p)).to.be.true;
+      expect(state.isChanged(p)).to.be.false; // now a known marker
+    });
+
+    it("O22: a directory marker now missing with no live children reports unchanged", () => {
+      const dir = path.join(root, "d");
+      fs.mkdirSync(dir);
+      const state = new ObservedState();
+      state.record(dir);
+      fs.rmSync(dir, { recursive: true });
+      expect(state.isChanged(dir)).to.be.false;
+    });
+
+    it("O23: a directory marker now missing with a live child reports changed and drops the child", () => {
+      const dir = path.join(root, "d");
+      const child = path.join(dir, "c.txt");
+      fs.mkdirSync(dir);
+      fs.writeFileSync(child, "same");
+      const state = new ObservedState();
+      state.record(dir);
+      state.record(child);
+      fs.rmSync(dir, { recursive: true });
+      expect(state.isChanged(dir)).to.be.true;
+      fs.mkdirSync(dir);
+      fs.writeFileSync(child, "same");
+      expect(state.isChanged(child)).to.be.true; // child entry was dropped
+    });
+
+    it("O24: a directory marker now missing on a lossy ledger reports changed", () => {
+      const dir = path.join(root, "d");
+      fs.mkdirSync(dir);
+      const x = path.join(root, "x.txt");
+      const y = path.join(root, "y.txt");
+      fs.writeFileSync(x, "x");
+      fs.writeFileSync(y, "y");
+      const state = new ObservedState({ maxEntries: 1 });
+      state.record(dir);
+      state.record(x); // evicts the dir marker (not live; not lossy)
+      state.record(y); // evicts a live file -> lossy
+      state.record(dir);
+      fs.rmSync(dir, { recursive: true });
+      expect(state.isChanged(dir)).to.be.true;
+    });
+
+    it("O25: a directory marker now a file reports changed", () => {
+      const p = path.join(root, "thing");
+      fs.mkdirSync(p);
+      const state = new ObservedState();
+      state.record(p);
+      fs.rmSync(p, { recursive: true });
+      fs.writeFileSync(p, "x");
+      expect(state.isChanged(p)).to.be.true;
+    });
+
+    it("O26: an unknown directory on an unprimed ledger reports changed", () => {
+      const dir = path.join(root, "d");
+      fs.mkdirSync(dir);
+      const state = new ObservedState();
+      expect(state.isChanged(dir)).to.be.true;
+      expect(state.isChanged(dir)).to.be.false;
+    });
+
+    it("O27: an unknown directory under a primed root holding a new file reports changed", () => {
+      const state = new ObservedState();
+      state.prime([root]);
+      const dir = path.join(root, "moved");
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "a.txt"), "a");
+      expect(state.isChanged(dir)).to.be.true;
+    });
+
+    it("O28: an unknown directory under a primed root holding only recorded files reports unchanged", () => {
+      const state = new ObservedState();
+      state.prime([root]);
+      const dir = path.join(root, "moved");
+      const a = path.join(dir, "a.txt");
+      const b = path.join(dir, "deep", "b.txt");
+      fs.mkdirSync(path.join(dir, "deep"), { recursive: true });
+      fs.writeFileSync(a, "a");
+      fs.writeFileSync(b, "b");
+      state.record(a);
+      state.record(b);
+      expect(state.isChanged(dir)).to.be.false;
+    });
+
+    it("O29: after a moved-in directory scan, an event on a child does not report changed", () => {
+      const state = new ObservedState();
+      state.prime([root]);
+      const dir = path.join(root, "moved");
+      const a = path.join(dir, "a.txt");
+      const b = path.join(dir, "b.txt");
+      fs.mkdirSync(dir);
+      fs.writeFileSync(a, "a");
+      fs.writeFileSync(b, "b");
+      expect(state.isChanged(dir)).to.be.true; // evaluates every file, no short-circuit
+      expect(state.isChanged(a)).to.be.false;
+      expect(state.isChanged(b)).to.be.false;
+    });
+
+    it("O30: an unknown directory under a primed root on a lossy ledger reports changed", () => {
+      const f1 = path.join(root, "f1.txt");
+      const f2 = path.join(root, "f2.txt");
+      fs.writeFileSync(f1, "1");
+      fs.writeFileSync(f2, "2");
+      const state = new ObservedState({ maxEntries: 1 });
+      expect(state.prime([root]).complete).to.be.false;
+      const dir = path.join(root, "moved");
+      fs.mkdirSync(dir);
+      expect(state.isChanged(dir)).to.be.true;
+    });
+
+    it("O31: dropping entries under a directory does not drop a sibling sharing its prefix", () => {
+      const sub = path.join(root, "sub");
+      const subway = path.join(root, "subway");
+      fs.mkdirSync(sub);
+      fs.mkdirSync(subway);
+      const inSub = path.join(sub, "f.txt");
+      const inSubway = path.join(subway, "f.txt");
+      fs.writeFileSync(inSub, "x");
+      fs.writeFileSync(inSubway, "x");
+      const state = new ObservedState();
+      state.record(sub);
+      state.record(inSub);
+      state.record(inSubway);
+      fs.rmSync(sub, { recursive: true });
+      expect(state.isChanged(sub)).to.be.true;
+      expect(state.isChanged(inSubway)).to.be.false; // survived
+    });
+
+    it("O32: a link to a directory is stored as a link marker and its removal reports changed", function () {
+      const target = path.join(root, "target");
+      const link = path.join(root, "link");
+      fs.mkdirSync(target);
+      mkLink(target, link, this);
+      const called: string[] = [];
+      const state = new ObservedState({
+        fingerprint: (p) => {
+          called.push(p);
+          return "fp";
+        },
+      });
+      state.record(link);
+      expect(called).to.have.length(0);
+      expect(state.isChanged(link)).to.be.false;
+      fs.rmSync(link, { recursive: true });
       expect(state.isChanged(link)).to.be.true;
     });
   });

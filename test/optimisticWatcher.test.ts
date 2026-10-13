@@ -446,6 +446,30 @@ describe("OptimisticWatcher", () => {
         expect(w.txId - before).to.equal(1);
       });
 
+      it("W1: three events on a recorded subdirectory do not bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const sub = path.join(tmpDir, "sub");
+        fs.mkdirSync(sub);
+        const observed = new ObservedState();
+        observed.record(sub);
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed,
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(sub));
+        fireAll(fired);
+        fireAll(fired);
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(0);
+      });
+
       it("W10: observed: null — two events for a subdirectory both bump", async () => {
         const { factory, fireAll } = makeFakeFactory();
         const sub = path.join(tmpDir, "sub");

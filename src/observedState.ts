@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
 import { toPosixPath } from "./strings.js";
+import { walkFiles } from "./walkFiles.js";
 
 export type Fingerprinter = (filePath: string) => string;
 
@@ -34,6 +35,9 @@ let errorTokenCounter = 0;
  * Every failure mode this function can hit therefore degrades toward
  * reporting an *extra* change, never toward masking a real one — callers
  * built on this fingerprinter (see `ObservedState`) fail open, not closed.
+ *
+ * Called directly on a directory it still returns a unique token (`EISDIR`);
+ * `ObservedState` itself never passes it a directory.
  */
 export const contentFingerprint: Fingerprinter = (filePath) => {
   try {
@@ -58,6 +62,17 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * stored value, stores the new value, and reports whether it differed —
  * check and record happen atomically from the caller's perspective. A
  * path that has never been seen before is treated as changed.
+ *
+ * Directories (and links to directories) are stored as markers and never
+ * reach the fingerprinter. `isChanged` on a path that is now a directory:
+ * a known marker is unchanged (a dir/link flip is changed); a live file
+ * replaced by a directory is changed; a never-seen directory is changed
+ * unless it lies under a `prime`d root, the ledger is not lossy and it is
+ * not a link, in which case every file beneath it is evaluated and the
+ * directory is changed only if one of them is. On a path that is now a file
+ * or missing, a stored directory marker drops all entries beneath it and is
+ * changed if the path is now a file, a dropped entry was a live file, the
+ * ledger is lossy, or the marker was a link.
  *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
  * long-lived recursive watch can't grow it unboundedly. An evicted path
@@ -108,7 +123,7 @@ export class ObservedState {
     }
   }
 
-  /** True when `p` is a primed root or lies beneath one. Consumed by later vouching logic. */
+  /** True when `p` is a primed root or lies beneath one. Used to decide whether the ledger vouches for a directory. */
   private isUnderPrimedRoot(p: string): boolean {
     const key = ObservedState.normalize(p);
     return this.primedRoots.some((r) => key === r || key.startsWith(r + "/"));
@@ -167,23 +182,77 @@ export class ObservedState {
     }
   }
 
-  /** Fingerprint `filePath` now and store it, unconditionally — "this state is accounted for". */
+  /**
+   * Record `filePath` now, unconditionally — "this state is accounted for".
+   * A directory (or link to one) is stored as a marker; the fingerprinter is
+   * only called for files.
+   */
   record(filePath: string): void {
     const key = ObservedState.normalize(filePath);
-    this.touch(key, { kind: "file", fp: this.fingerprint(filePath) });
+    const kind = this.classify(filePath);
+    if (kind === "file") {
+      this.touch(key, { kind: "file", fp: this.fingerprint(filePath) });
+    } else {
+      this.touch(key, { kind: "dir", link: kind === "dirlink" });
+    }
   }
 
   /**
-   * Check-and-record: fingerprints `filePath`, compares it against the
-   * stored value, stores the new value, and returns whether it differed.
+   * Check-and-record: compares `filePath`'s current state against the stored
+   * entry, stores the new state, and returns whether it differed. See the
+   * class doc for the directory rules.
    */
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
     const prev = this.entries.get(key);
-    const next: Entry = { kind: "file", fp: this.fingerprint(filePath) };
-    this.touch(key, next);
-    // A stored dir marker has no comparable fingerprint: treat it like never-seen.
-    return prev === undefined || prev.kind !== "file" || prev.fp !== next.fp;
+    const kind = this.classify(filePath);
+
+    if (kind !== "file") {
+      const link = kind === "dirlink";
+      if (prev?.kind === "dir") {
+        // A dir replaced by a link (or vice versa) is a real change; otherwise unchanged.
+        this.touch(key, { kind: "dir", link });
+        return prev.link !== link;
+      }
+      if (prev?.kind === "file" && prev.fp !== "absent") {
+        this.touch(key, { kind: "dir", link });
+        return true; // live file replaced by a directory
+      }
+      // Never seen (or recorded absent): scan only if the ledger can vouch for it.
+      const vouched = !link && !this.lossy && this.isUnderPrimedRoot(filePath);
+      let changed = true;
+      if (vouched) {
+        let files: string[] | undefined;
+        try {
+          files = walkFiles(filePath, () => true);
+        } catch {
+          files = undefined;
+        }
+        if (files !== undefined) {
+          changed = false;
+          // Evaluate every file (no short-circuit) so each one is recorded.
+          for (const f of files) if (this.isChanged(f)) changed = true;
+        }
+      }
+      this.touch(key, { kind: "dir", link });
+      return changed;
+    }
+
+    const next = this.fingerprint(filePath);
+    if (prev?.kind === "dir") {
+      const prefix = key.replace(/\/+$/, "") + "/";
+      let droppedLive = false;
+      for (const [k, e] of [...this.entries]) {
+        if (!k.startsWith(prefix)) continue;
+        if (e.kind === "file" && e.fp !== "absent") droppedLive = true;
+        this.entries.delete(k);
+      }
+      this.touch(key, { kind: "file", fp: next });
+      // "absent" distinguishes a missing path from one that is now a file.
+      return next !== "absent" || droppedLive || this.lossy || prev.link;
+    }
+    this.touch(key, { kind: "file", fp: next });
+    return prev === undefined || prev.fp !== next;
   }
 
   /** Remove a tracked path. */
