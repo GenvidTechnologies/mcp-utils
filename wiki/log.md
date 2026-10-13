@@ -17,6 +17,14 @@ the full maintenance schema.
 
 ## 2026-10-13
 
+* **Correction**: failure-modes-that-report-success.md — `stale_after` moved
+  from `2027-09-11` back to `2027-03-11`. The 2026-09-11 ingest set it a year
+  past `generated.at`, but the page's claims are pinned to tool versions
+  (Node, npm, Actions), which the schema's decay policy gives ~6 months.
+  wiki-schema.md's worked example also cited a third date (`2027-02-16`);
+  it now states the six-month offset instead of a date that can drift.
+  Point correction, so `generated.at` is unchanged.
+
 * **Correction**: the wiki-schema.md entry below dates the schema-default
   change "as of gvt-dev 4.34.0". That was the installed version at the time,
   not the release that made the change: the default moved in **4.30.0**

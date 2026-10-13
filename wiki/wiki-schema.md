@@ -193,8 +193,10 @@ Choose `stale_after` by the topic's own volatility, not a fixed default:
   privilege model — gets **~6 months**. These are the claims that go wrong
   silently: the page keeps reading as true after the platform moves, and
   nothing in this repo re-checks it. `wiki/failure-modes-that-report-success.md`
-  is the worked example (Node 24.11.1, npm 11.x, Actions redirect resolution),
-  set to `2027-02-16`.
+  is the worked example (Node 24.11.1, npm 11.x, Actions redirect resolution):
+  its `stale_after` sits six months past its `generated.at`, and an ingest
+  that refreshes `generated.at` moves `stale_after` by the same six months —
+  not to a year, which is what the 2026-09-11 ingest did.
 - A page about **this package's own settled design** — a utility's contract, a
   decision already recorded in `wiki/decisions/` — gets **a year**, or omits
   `stale_after` entirely. The ADR is the thing that would change first, and it

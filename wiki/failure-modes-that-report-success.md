@@ -4,7 +4,7 @@ title: Failure modes that report success
 description: Eleven ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
-stale_after: 2027-09-11
+stale_after: 2027-03-11
 generated: { by: process:maintain-wiki, at: 2026-09-11T00:00:00Z }
 sources:
   - id: vacuous-corpus
