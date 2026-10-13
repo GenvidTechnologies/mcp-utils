@@ -15,6 +15,32 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-10-13
+
+* **Correction**: the wiki-schema.md entry below dates the schema-default
+  change "as of gvt-dev 4.34.0". That was the installed version at the time,
+  not the release that made the change: the default moved in **4.30.0**
+  (gvt-dev#385), and the link/orphan scanners began declining `wiki/` pages in
+  **4.25.0** (ADR-0053), per the plugin CHANGELOG. The page now says
+  "since 4.30.0".
+* **Update**: wiki-schema.md — the `generated` field description now says
+  when to refresh `generated.at`: on an ingest that re-derives the page, not
+  on a point correction. The two updates below were point corrections, so
+  neither page's `at` was bumped.
+
+* **Update**: wiki-schema.md — the header said this repo keeps the schema
+  "rather than the plugin's default `docs/wiki-schema.md`". As of gvt-dev
+  4.34.0 the default is `<wikiDir>/schema.md` and `docs/wiki-schema.md` is
+  only the legacy fallback; restated so the page credits the `paths` override,
+  not a departure from a default that has moved. Flagged by
+  `/gvt-dev:maintain-wiki lint`; source is the resynced `CONVENTIONS.md`
+  ("Runtime path resolution").
+* **Update**: failure-modes-that-report-success.md — instance 8's
+  countermeasure cites `scanBrokenLinks` as the resolver to trust. Added that
+  it has declined `wiki/` pages since ADR-0053, so for bundle pages the
+  resolver is `maintain-wiki lint`. The historical claim (it found all five
+  links) is unchanged.
+
 ## 2026-09-11
 
 * **Update**: failure-modes-that-report-success.md — added an eleventh

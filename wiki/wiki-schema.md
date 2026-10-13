@@ -20,8 +20,11 @@ sources:
 # Wiki Maintenance Schema
 
 > Project conventions consumed by `/gvt-dev:maintain-wiki`. This repo keeps it
-> at `wiki/wiki-schema.md`, inside the bundle, rather than the plugin's default
-> `docs/wiki-schema.md` — see ADR-0004. This is the **maintenance
+> at `wiki/wiki-schema.md`, inside the bundle — see ADR-0004. That is not the
+> plugin's default name: since gvt-dev 4.30.0 (gvt-dev#385) the default is
+> `<wikiDir>/schema.md`, with the legacy `docs/wiki-schema.md` still honoured,
+> so it is `.gvt-agent.json`'s `paths['docs/wiki-schema.md']` override that
+> points the skill (and `run-retro`'s wiki probe) here. This is the **maintenance
 > schema** for the three-tier wiki: `raw/` (immutable captured sources) →
 > `<wikiDir>/` (LLM-maintained pages, `index.md`, `log.md`) → this schema (the rules
 > that govern how the first two are kept in sync).
@@ -93,7 +96,11 @@ fits. A claim drawn from a source carries a footnote keyed to that source's
 - **`generated`** — §5.2. `by` is **required** within the block. Value is
   `process:maintain-wiki` (the `process:<id>` actor form) — this names the
   durable producer (the skill's ingest contract), not a model or agent name
-  that changes underneath the page.
+  that changes underneath the page. Refresh `at` when an ingest re-derives
+  the page's content from its sources; leave it alone for a correction that
+  fixes a claim without re-deriving the rest, since bumping it would date the
+  whole page to a review it never had. `stale_after`, not `at`, carries the
+  staleness verdict either way.
 - **`verified`** — §5.3, **never auto-emitted**. Approving an `ingest` at its
   interactive checkpoint is *not* `human:` verification — verification is a
   separate, deliberate act. A page therefore reads as `unverified` (§5.3's
