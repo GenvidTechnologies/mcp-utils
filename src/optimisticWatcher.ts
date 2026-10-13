@@ -255,17 +255,31 @@ export class OptimisticWatcher {
   // Internal
   // ---------------------------------------------------------------------------
 
+  /**
+   * Record `filename` in the observed ledger without ever throwing. A throwing
+   * fingerprinter must not escape `handleEvent` from L1/L2: the event is
+   * already being suppressed, so a failed record only costs a possible extra
+   * bump on a later L3 check (the path stays unrecorded).
+   */
+  private safeRecord(filename: string): void {
+    try {
+      this.observed?.record(filename);
+    } catch (err) {
+      this.logger?.("record threw, ledger not updated:", filename, err);
+    }
+  }
+
   private handleEvent(filename: string): void {
     // Layer 1: synchronous suppress window
     if (this.suppressDepth > 0) {
-      this.observed?.record(filename);
+      this.safeRecord(filename);
       this.logger?.("suppressed (L1):", filename);
       return;
     }
 
     // Layer 2: pre-registered expected path
     if (this.expected.consume(filename)) {
-      this.observed?.record(filename);
+      this.safeRecord(filename);
       this.logger?.("suppressed (L2):", filename);
       return;
     }

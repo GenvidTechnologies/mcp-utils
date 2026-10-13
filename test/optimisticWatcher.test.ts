@@ -466,6 +466,59 @@ describe("OptimisticWatcher", () => {
 
         expect(w.txId - before).to.equal(2);
       });
+
+      it("W11: L1 suppress with a throwing fingerprinter — does not throw, no bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const externalCalls: string[] = [];
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: new ObservedState({
+            fingerprint: () => {
+              throw new Error("boom");
+            },
+          }),
+          onExternalChange: (p) => externalCalls.push(p),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(tmpDir, "w11.txt"));
+        await w.suppress(async () => {
+          fireAll(fired);
+          await Promise.resolve();
+        });
+
+        expect(w.txId - before).to.equal(0);
+        expect(externalCalls).to.have.length(0);
+      });
+
+      it("W12: L2 expect with a throwing fingerprinter — does not throw, no bump, no callback", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const externalCalls: string[] = [];
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: new ObservedState({
+            fingerprint: () => {
+              throw new Error("boom");
+            },
+          }),
+          onExternalChange: (p) => externalCalls.push(p),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const target = path.join(tmpDir, "w12.txt");
+        w.expect(target);
+        fireAll(toPosixPath(path.resolve(target)));
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(0);
+        expect(externalCalls).to.have.length(0);
+      });
     });
   });
 
