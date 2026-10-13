@@ -17,6 +17,17 @@ the full maintenance schema.
 
 ## 2026-10-13
 
+* **Correction**: the wiki-schema.md entry below dates the schema-default
+  change "as of gvt-dev 4.34.0". That was the installed version at the time,
+  not the release that made the change: the default moved in **4.30.0**
+  (gvt-dev#385), and the link/orphan scanners began declining `wiki/` pages in
+  **4.25.0** (ADR-0053), per the plugin CHANGELOG. The page now says
+  "since 4.30.0".
+* **Update**: wiki-schema.md — the `generated` field description now says
+  when to refresh `generated.at`: on an ingest that re-derives the page, not
+  on a point correction. The two updates below were point corrections, so
+  neither page's `at` was bumped.
+
 * **Update**: wiki-schema.md — the header said this repo keeps the schema
   "rather than the plugin's default `docs/wiki-schema.md`". As of gvt-dev
   4.34.0 the default is `<wikiDir>/schema.md` and `docs/wiki-schema.md` is
