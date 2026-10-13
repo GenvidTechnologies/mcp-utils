@@ -138,7 +138,12 @@ export class ObservedState {
   }
 
   private static normalize(p: string): string {
-    return toPosixPath(p);
+    // Trailing slashes are not part of identity ("D/" and "D" are one key); a
+    // bare root ("/") and a drive root ("C:/") keep theirs.
+    const k = toPosixPath(p);
+    let end = k.length;
+    while (end > 1 && k[end - 1] === "/" && !(end === 3 && k[1] === ":")) end--;
+    return k.slice(0, end);
   }
 
   /** Insert/refresh `key` as the most-recently-used entry, evicting the oldest if over capacity. */
@@ -219,8 +224,10 @@ export class ObservedState {
   /**
    * Walks `roots` recursively and records a baseline: directories (and links
    * to directories, which are not descended into) as markers, files as
-   * fingerprints. Fills gaps only — a key that already has an entry is never
-   * overwritten. Never throws: a directory that cannot be read, or a
+   * fingerprints. Fills gaps only — an entry of the same kind (and, for a
+   * directory, the same identity) is never overwritten; one whose kind or
+   * identity no longer matches the disk is dropped with its subtree and
+   * re-recorded. Never throws: a directory that cannot be read, or a
    * fingerprinter that throws, marks the ledger incomplete and the walk
    * continues. A missing root counts as empty. The roots themselves get no
    * marker. `complete: false` means the ledger can no longer vouch; size
@@ -229,8 +236,7 @@ export class ObservedState {
   prime(roots: string[]): PrimeSummary {
     const summary: PrimeSummary = { files: 0, directories: 0, complete: true };
     for (const root of roots) {
-      let key = ObservedState.normalize(root);
-      while (key.length > 1 && key.endsWith("/")) key = key.slice(0, -1);
+      const key = ObservedState.normalize(root);
       if (!this.primedRoots.includes(key)) this.primedRoots.push(key);
       this.walk(root, summary);
     }
@@ -251,14 +257,28 @@ export class ObservedState {
       const key = ObservedState.normalize(full);
       try {
         const { kind, id } = this.classify(full);
-        const exists = this.entries.has(key);
+        let prev = this.entries.get(key);
+        // A same-kind entry (same identity, for a directory) is never overwritten;
+        // one whose kind or identity no longer matches the disk is stale: drop it
+        // and its subtree, then record what is there.
+        const link = kind === "dirlink";
+        if (
+          prev !== undefined &&
+          (kind === "file"
+            ? prev.kind !== "file"
+            : prev.kind !== "dir" || prev.id !== id || prev.link !== link)
+        ) {
+          this.dropBeneath(key);
+          prev = undefined;
+        }
+        const exists = prev !== undefined;
         if (kind === "file") {
           if (exists) continue;
           this.touch(key, { kind: "file", fp: this.fingerprint(full) });
           summary.files++;
         } else {
           if (!exists) {
-            this.touch(key, { kind: "dir", link: kind === "dirlink", id, scanned: true });
+            this.touch(key, { kind: "dir", link, id, scanned: true });
             summary.directories++;
           }
           if (kind === "dir") this.walk(full, summary);
@@ -428,7 +448,9 @@ export class ObservedState {
       }
     }
     for (const k of nodes) {
-      if (isLiveFile(this.entries.get(k))) droppedLive = true;
+      const e = this.entries.get(k);
+      // A link marker is content in the same sense a live file is.
+      if (isLiveFile(e) || (e?.kind === "dir" && e.link)) droppedLive = true;
       this.entries.delete(k);
       this.children.delete(k);
     }

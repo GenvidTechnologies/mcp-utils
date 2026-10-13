@@ -112,6 +112,52 @@ describe("ObservedState", () => {
       }
     }
 
+    it("O44: prime reconciles a path recorded as a file that is now a directory", () => {
+      const r = path.join(root, "r");
+      const out = path.join(root, "out");
+      const D = path.join(r, "D");
+      fs.mkdirSync(r);
+      fs.mkdirSync(out);
+      fs.writeFileSync(D, "x");
+      const state = new ObservedState();
+      state.prime([r]);
+      state.record(D);
+      fs.rmSync(D);
+      fs.mkdirSync(D);
+      fs.writeFileSync(path.join(D, "a.txt"), "A");
+      state.prime([r]);
+      expect(state.isChanged(D)).to.be.false; // recorded as the directory it is now
+      fs.renameSync(D, path.join(out, "D"));
+      state.isChanged(D);
+      fs.renameSync(path.join(out, "D"), D);
+      expect(state.isChanged(D)).to.be.true;
+    });
+
+    it("O45: removing a directory that holds only a link reads as changed", function () {
+      const r = path.join(root, "r");
+      const D = path.join(r, "D");
+      const target = path.join(root, "target");
+      fs.mkdirSync(D, { recursive: true });
+      fs.mkdirSync(target);
+      mkLink(target, path.join(D, "L"), this);
+      const state = new ObservedState();
+      state.prime([r]);
+      fs.renameSync(D, path.join(root, "moved"));
+      expect(state.isChanged(D)).to.be.true;
+    });
+
+    it("O46: a trailing slash does not create a second key", () => {
+      const dir = path.join(root, "d");
+      fs.mkdirSync(dir);
+      fs.writeFileSync(path.join(dir, "f.txt"), "x");
+      const state = new ObservedState();
+      state.record(dir + "/");
+      const size = state.size;
+      state.record(dir);
+      expect(state.size).to.equal(size);
+      expect(state.isChanged(dir + "/")).to.equal(state.isChanged(dir));
+    });
+
     it("O12: the fingerprinter is never called with a directory path", () => {
       const dir = path.join(root, "d");
       const nested = path.join(root, "d", "n");
