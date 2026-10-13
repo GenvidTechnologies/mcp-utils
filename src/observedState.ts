@@ -6,6 +6,8 @@ export type Fingerprinter = (filePath: string) => string;
 
 const DEFAULT_MAX_ENTRIES = 1000;
 
+type Entry = { kind: "file"; fp: string };
+
 let errorTokenCounter = 0;
 
 /**
@@ -52,7 +54,7 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * direction as `contentFingerprint`'s error handling.
  */
 export class ObservedState {
-  private entries = new Map<string, string>(); // normalized path → fingerprint
+  private entries = new Map<string, Entry>(); // normalized path → ledger entry
   private readonly fingerprint: Fingerprinter;
   private readonly maxEntries: number;
 
@@ -66,7 +68,7 @@ export class ObservedState {
   }
 
   /** Insert/refresh `key` as the most-recently-used entry, evicting the oldest if over capacity. */
-  private touch(key: string, value: string): void {
+  private touch(key: string, value: Entry): void {
     // Map iteration order is insertion order; delete+set moves key to the end (MRU).
     this.entries.delete(key);
     this.entries.set(key, value);
@@ -79,7 +81,7 @@ export class ObservedState {
   /** Fingerprint `filePath` now and store it, unconditionally — "this state is accounted for". */
   record(filePath: string): void {
     const key = ObservedState.normalize(filePath);
-    this.touch(key, this.fingerprint(filePath));
+    this.touch(key, { kind: "file", fp: this.fingerprint(filePath) });
   }
 
   /**
@@ -89,9 +91,9 @@ export class ObservedState {
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
     const prev = this.entries.get(key);
-    const next = this.fingerprint(filePath);
+    const next: Entry = { kind: "file", fp: this.fingerprint(filePath) };
     this.touch(key, next);
-    return prev === undefined || prev !== next;
+    return prev === undefined || prev.fp !== next.fp;
   }
 
   /** Remove a tracked path. */

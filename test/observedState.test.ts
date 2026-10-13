@@ -55,6 +55,42 @@ describe("ObservedState", () => {
     expect(os1.isChanged("a.json")).to.be.true;
   });
 
+  describe("real-fs pins", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "observedstate-pin-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("O3: a path recorded as a directory then replaced by a file reports changed", () => {
+      const target = path.join(tmpDir, "thing");
+      fs.mkdirSync(target);
+      const state = new ObservedState();
+      state.record(target);
+      fs.rmSync(target, { recursive: true });
+      fs.writeFileSync(target, "now a file");
+      expect(state.isChanged(target)).to.be.true;
+    });
+
+    it("O15: a self-referencing link (ELOOP) reports changed on every call", function () {
+      const link = path.join(tmpDir, "loop");
+      try {
+        fs.symlinkSync(link, link, process.platform === "win32" ? "junction" : "dir");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") this.skip();
+        throw err;
+      }
+      const state = new ObservedState();
+      expect(state.isChanged(link)).to.be.true;
+      expect(state.isChanged(link)).to.be.true;
+    });
+  });
+
   describe("contentFingerprint", () => {
     let tmpDir: string;
 

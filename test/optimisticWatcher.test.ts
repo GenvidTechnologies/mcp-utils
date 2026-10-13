@@ -411,6 +411,62 @@ describe("OptimisticWatcher", () => {
       expect(w.txId).to.equal(2);
       expect(externalCalls).to.have.length(2);
     });
+
+    describe("real-fs pins", () => {
+      let tmpDir: string;
+
+      beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-pin-"));
+      });
+
+      afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      });
+
+      it("W3: a real content modification of a recorded file bumps exactly once", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const file = path.join(tmpDir, "a.txt");
+        fs.writeFileSync(file, "one");
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const fired = toPosixPath(path.resolve(file));
+        fireAll(fired); // first sight: records it
+        await Promise.resolve();
+        const before = w.txId;
+
+        fs.writeFileSync(file, "two");
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(1);
+      });
+
+      it("W10: observed: null — two events for a subdirectory both bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const sub = path.join(tmpDir, "sub");
+        fs.mkdirSync(sub);
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: null,
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(sub));
+        fireAll(fired);
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(2);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
