@@ -31,8 +31,8 @@ it does not supersede it. What ADR-0002 decided still holds: the default
 fingerprint is a content hash (never `size`+`mtime`), L1 and L2 suppressions
 also `record()` into the ledger, an unreadable file produces a unique token so
 it fails open, and every failure degrades toward an extra bump rather than
-toward staleness (the pre-`start()` window below excepted). This record adds
-two things ADR-0002 did not cover.
+toward staleness (the pre-`start()` window and the round-trip known limit
+below excepted). This record adds two things ADR-0002 did not cover.
 
 On Windows with last-access updates enabled, a recursive `fs.watch` reports
 events that are not content changes:
@@ -81,8 +81,8 @@ routes to a missed change, and each needed state the first design lacked.
   the `lstat` that classification already makes. Only a marker with the same
   identity is unchanged; a different one drops the old subtree and evaluates
   the new directory like a never-seen one. An inode of 0 means unknown and
-  never matches, so a filesystem without usable inodes re-evaluates every time
-  and fails toward an extra bump.
+  never matches, so a filesystem without usable inodes re-evaluates every
+  directory event (see Consequences).
 - *A directory moved in by a self-write.* Layers 1 and 2 `record()` every
   suppressed path, and `record()` stored a directory without its children. An
   atomic install that renames a staging directory into place inside
@@ -128,6 +128,18 @@ ledger turns **lossy** when a directory cannot be read, a fingerprinter throws,
 or an eviction drops an entry holding a real fingerprint. Lossy never clears,
 and a lossy ledger stops vouching for never-seen directories. `PrimeSummary`
 reports `files`, `directories` and `complete`.
+
+`prime` also reconciles stale entries. An existing entry whose kind, identity
+or link flag conflicts with the disk (a path recorded as a file that became a
+directory while no watcher ran, on a ledger shared across watchers) has its
+subtree dropped and what is on disk recorded; otherwise a later move-out and
+move-back with identical content would read as unchanged. An entry of the same
+kind and identity is still never overwritten.
+
+A dropped link marker counts as a dropped live entry, so removing a directory
+that holds only a junction reads as changed, consistent with removing the
+junction itself. Keys are POSIX-normalized with trailing slashes stripped, so
+`D/` and `D` are one key.
 
 **`OptimisticWatcher.start()` primes once per instance, after creating the
 watch handles.** `fs.watch` callbacks run on the event loop, so none fire during
@@ -245,8 +257,33 @@ Alternatives weighed and rejected for the first-read part:
   here.
 - **Linux and macOS directory-event shapes were not measured**, nor was their
   inode behaviour. The design classifies the path when the event is handled, so
-  it does not depend on event shapes. Where inodes are absent the identity is
-  unknown and the path is re-evaluated each time, which costs extra bumps.
+  it does not depend on event shapes.
+- **Without inodes, directory events bump.** Where the inode is 0 or absent,
+  identity is unknown and never matches, so every directory event re-evaluates
+  the directory: it drops the old subtree and scans the new one. That means
+  extra bumps and O(subtree) cost per event, and a recorded directory's
+  repeated events will bump rather than read as unchanged (the measured
+  quiet-listing result does not hold on such a volume). Not measured; no such
+  volume was available.
+- **Path spelling is part of the key.** The ledger is keyed by the path string
+  (POSIX-normalized, trailing slashes stripped). A caller mixing spellings of
+  one path, such as drive-letter case (`C:` versus `c:`) on Windows, gets
+  separate keys and can miss a change. `OptimisticWatcher` uses one spelling
+  for priming and events, so this needs a caller that mixes spellings or two
+  watchers sharing a ledger. It is the pre-existing behaviour of a
+  string-keyed ledger.
+- **Known limit: a directory renamed out, edited, and renamed back reads as
+  unchanged.** If a directory is renamed out of the watched tree, changed
+  outside it (a file edited, added or removed), and renamed back to the same
+  path before the watcher handles the move-out event (for example in one
+  synchronous block, since `fs.watch` callbacks run afterwards), it keeps its
+  inode. The same-identity rule skips any child comparison, and the edit
+  happened outside the root, so no file event arrives. If the move-out event
+  is handled before the move-back, the change is caught (measured). Closing it
+  would mean re-hashing a directory's subtree on every directory event, and
+  on Windows listing a directory fires one, which is the read-only hot path
+  this record exists to keep quiet. It is deliberately not done;
+  [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
 - **Known limit: identity is only as good as the filesystem's inode reuse.** A
   filesystem that hands a deleted directory's inode straight to a directory
   created in its place would let a swapped-in directory pass as the recorded

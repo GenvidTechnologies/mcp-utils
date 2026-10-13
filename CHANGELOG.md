@@ -44,7 +44,25 @@ This file starts at 0.6.0. For earlier versions see the
     non-lossy ledger, where its files decide; with no marker to compare, that
     scan also drops recorded files it did not find and reports the change.
     On a filesystem without inode numbers the identity is unknown and the
-    path is always re-evaluated (an extra bump, never a missed change).
+    path is always re-evaluated, so every directory event on such a volume
+    bumps and costs a scan of the subtree (an extra bump, not a missed
+    change; not measured, no such volume was available).
+  - `prime` reconciles an existing entry whose kind, identity or link flag
+    conflicts with the disk (for example a path recorded as a file that has
+    become a directory): it drops that entry's subtree and records what is
+    there. A same-kind, same-identity entry is still never overwritten.
+  - A dropped link marker counts as a dropped live entry, so removing a
+    directory that holds only a junction reads as changed, as removing the
+    junction itself does. Keys have trailing slashes stripped (`D/` and `D`
+    are one key); other spellings of one path (for example drive-letter case
+    on Windows) remain separate keys.
+  - **Known limit:** a directory renamed out of the watched tree, edited
+    outside it, and renamed back before the watcher handles the move-out
+    event (for example in one synchronous block) reads as unchanged. It keeps
+    its identity and no file event arrives for the outside edit. If the
+    move-out event is handled first, the change is caught. Closing it would
+    mean re-hashing a directory's subtree on every directory event, which
+    would undo the quiet read-only path; [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
   - Entries are indexed by parent, so dropping a subtree costs that subtree
     rather than the whole ledger.
   - `OptimisticWatcher.start()` now **synchronously walks and hashes the
@@ -54,13 +72,16 @@ This file starts at 0.6.0. For earlier versions see the
   - **`forget(path)` now removes the path and every entry beneath it**
     (previously only the key). A path that is a file or missing, whose stored
     entry is not a live file, likewise drops everything beneath it on
-    `isChanged` and `record`, so a directory moved out and back in is
-    re-evaluated rather than matched against orphaned child fingerprints.
+    `isChanged` and `record`, so a directory that comes back under a
+    different identity is re-evaluated rather than matched against orphaned
+    child fingerprints (but see the known limit above for the same-identity
+    round trip).
   - A first event on a pre-existing file no longer bumps `txId`.
   - The scan of a never-seen directory under a primed root hashes its files
     synchronously on the event path, at a cost proportional to that subtree.
   - A throwing custom `Fingerprinter` no longer throws out of an L1/L2
-    suppression's ledger `record`; it fails open as before.
+    suppression's ledger `record`: the throw is now caught and logged, and the
+    path stays unrecorded (previously it escaped the event handler).
   - `observed: null` is unchanged: every event not suppressed by L1/L2 bumps,
     including directory events and first-read access-time events, and no
     baseline is taken.
