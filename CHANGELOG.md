@@ -11,6 +11,53 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **`ObservedState.prime(roots)` and the exported `PrimeSummary` type.**
+  `prime` walks the given directories and records a baseline — directories
+  (and links to directories) as markers, files as fingerprints — filling gaps
+  only and never throwing. It returns `PrimeSummary`
+  (`{ files, directories, complete }`); `complete: false` means the ledger
+  can no longer vouch for the primed tree (a read failed, or a real
+  fingerprint was evicted).
+
+### Changed
+
+- **`ObservedState` classifies directories, and `OptimisticWatcher.start()`
+  primes a baseline, so read-only activity and directory events stop bumping
+  `txId`.** On Windows with last-access updates enabled, listing a directory
+  or first-reading a file fired a watch event that read as a content change.
+  Observable differences:
+  - `record` no longer fingerprints a directory (or a link to one): it stores
+    a marker, and no `Fingerprinter` is ever called with a directory.
+  - `isChanged` on a recorded directory is no longer always `true`; it is
+    `false` while the directory is unchanged. A never-seen directory still
+    reports `true` unless it lies under a `prime`d root on a non-lossy ledger,
+    where its files decide.
+  - `OptimisticWatcher.start()` now **synchronously walks and hashes the
+    watched trees once** (once per instance, after the watch handles are
+    created; a restart does not re-prime). Measured cost: about 12 ms for 49
+    files, up to roughly 0.2-1.7 s for 1000 files of 32 KB (see ADR-0008).
+  - A first event on a pre-existing file no longer bumps `txId`.
+  - A throwing custom `Fingerprinter` no longer throws out of an L1/L2
+    suppression's ledger `record`; it fails open as before.
+  - `observed: null` is unchanged: every event not suppressed by L1/L2 bumps,
+    including directory events and first-read access-time events, and no
+    baseline is taken.
+
+  **Size `maxEntries` to at least files plus directories.** Otherwise the
+  baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls
+  back to extra bumps, never to a missed change. Rationale and rejected
+  alternatives: [ADR-0008](wiki/decisions/0008-observed-state-classifies-directories-and-primes-at-start.md).
+
+  **Shipping as 0.11.0, a minor bump, not a patch — and consumers pinned at
+  `^0.10.0` will *not* pick this up automatically.** Below 1.0.0 a caret pin
+  excludes every minor bump: `^0.10.0` resolves as `>=0.10.0 <0.11.0`, so it
+  does not reach them on a plain install; they must widen their range to
+  `^0.11.0` deliberately. `construct3-chef`
+  ([construct3-chef#284](https://github.com/GenvidTechnologies/construct3-chef/issues/284))
+  is the consumer waiting on this.
+
 ## [0.10.0] - 2026-09-11
 
 ### Changed

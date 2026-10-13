@@ -481,7 +481,7 @@ Watches one or more directories and classifies incoming change events as either 
 
 - **Layer 1 — synchronous suppress window.** Wrap a write in `suppress(fn)`. While `fn` is executing, every watcher event is silently dropped. The depth counter is always unwound in a `finally` block, so a throw inside `fn` leaves the watcher in a healthy state.
 - **Layer 2 — pre-registered path.** Call `expect(path)` before triggering a write. If the watcher event arrives after the suppress window has closed (an async race on fast filesystems), `ExpectedChanges.consume` still catches and drops it. Both `expect()` and the default watcher key on the **resolved absolute path**, so passing a relative write path (the same one handed to `fs.writeFile`) matches correctly.
-- **Layer 3 — content unchanged since last accounted for.** Some filesystems (observed on Windows) deliver more than one raw `fs.watch` event for a single logical write, so an external overwrite or a self-write can still reach `bump()` twice even after Layers 1 and 2. Layer 3 asks a question with no timing term: does this path's content actually differ from what was last recorded? A duplicate event over unchanged content is suppressed; a genuine change still bumps `txId`. It's backed by an `ObservedState` ledger — a fresh instance by default, or your own via the `observed` option — and Layers 1 and 2 feed it too (`record()` on every suppression), so a path they suppress is also sealed as accounted for. Pass `observed: null` to disable Layer 3 and restore pre-Layer-3 behavior (every non-suppressed event bumps `txId`). Layer 3 fails open: an evicted ledger entry, an unreadable file, or a throwing custom `Fingerprinter` all degrade toward an *extra* bump, never toward staleness. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for why content hashing is the default and what was rejected instead.
+- **Layer 3 — content unchanged since last accounted for.** Some filesystems (observed on Windows) deliver more than one raw `fs.watch` event for a single logical write, so an external overwrite or a self-write can still reach `bump()` twice even after Layers 1 and 2. Layer 3 asks a question with no timing term: does this path's content actually differ from what was last recorded? A duplicate event over unchanged content is suppressed; a genuine change still bumps `txId`. It's backed by an `ObservedState` ledger — a fresh instance by default, or your own via the `observed` option — and Layers 1 and 2 feed it too (`record()` on every suppression), so a path they suppress is also sealed as accounted for. The ledger classifies each path before fingerprinting it: a directory (or a link to one) is stored as a marker and never fingerprinted, so a directory event does not bump `txId` on its own. The first `start()` also primes a baseline — it synchronously walks and hashes the watched trees once, after the watch handles are created — so a first read-only (access-time) event on a pre-existing file doesn't bump either. A restart does not re-prime. Pass `observed: null` to disable Layer 3 and restore pre-Layer-3 behavior: every event not suppressed by Layers 1 and 2 bumps `txId`, explicitly including directory events and first-read access-time events, and no baseline is taken. Layer 3 fails open: an evicted ledger entry, an unreadable file, an incomplete baseline, or a throwing custom `Fingerprinter` all degrade toward an *extra* bump, never toward staleness. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for why content hashing is the default and what was rejected instead, and [ADR-0008](wiki/decisions/0008-observed-state-classifies-directories-and-primes-at-start.md) for the directory classification and start-up baseline.
 
 **Cancelled-write idiom**
 
@@ -518,7 +518,7 @@ watcher.stop();
 
 The `watcherFactory` option (type `WatcherFactory`) accepts an injectable factory that starts a watcher and returns a `WatchHandle`. The default wraps `fs.watch({ recursive: true })`. Override it in tests to drive events programmatically without touching the filesystem.
 
-The `observed` option (type `ObservedState | null`) controls Layer 3: omit it and a default `ObservedState` is constructed for you (Layer 3 is **on by default**); pass an instance to reuse a shared or custom-fingerprinted ledger; pass `observed: null` to opt out of Layer 3 entirely.
+The `observed` option (type `ObservedState | null`) controls Layer 3: omit it and a default `ObservedState` is constructed for you (Layer 3 is **on by default**); pass an instance to reuse a shared or custom-fingerprinted ledger; pass `observed: null` to opt out of Layer 3 entirely. With `observed: null`, every event not suppressed by Layers 1 and 2 bumps `txId` — including every directory event and every first-read access-time event — and no start-up baseline is taken. With Layer 3 on, size the ledger's `maxEntries` (default 1000) to at least the watched trees' files plus directories; otherwise the baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls back to extra bumps, never to a missed change.
 
 ### ObservedState
 
@@ -539,9 +539,23 @@ observed.forget("/path/to/file.json"); // stop tracking; next isChanged() call r
 
 `isChanged(filePath)` is check-and-record: it fingerprints the current content, compares it against the stored value, stores the new fingerprint either way, and returns whether they differed — mirroring `ExpectedChanges.consume`'s check-and-remove shape. A path that has never been seen is treated as changed. `record(filePath)` stores the current fingerprint unconditionally with no comparison or return value — use it to seal a path as "accounted for" without caring whether it changed.
 
-The ledger is bounded by `maxEntries` (default 1000) with LRU eviction, so a long-running watch over a large tree doesn't grow it unboundedly; an evicted path simply reports changed again on its next check.
+**Directories.** Each path is classified (without following a link first) before it is fingerprinted. A directory, or a link to one, is stored as a marker, and a `Fingerprinter` is never called with a directory. `isChanged` on a directory already recorded as a directory reports unchanged (a directory-to-link flip reports changed); a live file replaced by a directory reports changed. A never-seen directory reports changed unless it lies under a root passed to `prime()`, the ledger is not lossy and it is not a link — then every file beneath it is evaluated and the directory is changed only if one of them is. When a recorded directory becomes a file or disappears, every entry beneath it is dropped. This is what stops a directory event from bumping `txId` while still catching a directory moved in or out, or a file replaced by a directory.
 
-The default `Fingerprinter` is the exported `contentFingerprint`: a sha1 hex digest of the file's bytes. A missing file (`ENOENT`) fingerprints as the literal string `"absent"` — a deletion is a real, detectable change. Any other read failure (e.g. `EACCES`) fingerprints as a unique per-failure token that can never compare equal to any other reading. Every failure mode fails open toward reporting an *extra* change rather than risking a missed one.
+**Baseline.** `prime(roots)` walks the given directories and records a baseline — directories and links as markers (links are not descended into), files as fingerprints — then returns a `PrimeSummary`:
+
+```ts
+import { ObservedState, type PrimeSummary } from "@genvidtech/mcp-utils";
+
+const observed = new ObservedState({ maxEntries: 5000 });
+const summary: PrimeSummary = observed.prime(["/project/data"]);
+// { files: 1200, directories: 40, complete: true }
+```
+
+`files` and `directories` count the entries the call added (existing entries are never overwritten, and the roots themselves are not counted). `prime` never throws: an unreadable directory or a throwing fingerprinter makes the ledger *lossy* and the walk continues; a missing root counts as empty. `complete: false` means the ledger can no longer vouch for the primed tree — a read failed, or an entry holding a real fingerprint was evicted. A lossy ledger never clears and stops vouching for never-seen directories, so events degrade to extra bumps. `OptimisticWatcher` calls `prime()` for you on its first `start()`.
+
+The ledger is bounded by `maxEntries` (default 1000) with LRU eviction, so a long-running watch over a large tree doesn't grow it unboundedly. **Size `maxEntries` to at least the number of files plus directories you expect to track**; otherwise the baseline is incomplete (`complete: false`; `OptimisticWatcher` logs it) and the watcher falls back to extra bumps, never to a missed change. An evicted path reports changed again on its next check — which, for an entry that had been primed, is that extra bump.
+
+The default `Fingerprinter` is the exported `contentFingerprint`: a sha1 hex digest of the file's bytes. A missing file (`ENOENT`) fingerprints as the literal string `"absent"` — a deletion is a real, detectable change. Any other read failure (e.g. `EACCES`) fingerprints as a unique per-failure token that can never compare equal to any other reading. Every failure mode fails open toward reporting an *extra* change rather than risking a missed one. `ObservedState` never passes it a directory; called directly on one, it still returns a unique token (`EISDIR`).
 
 Supply your own `Fingerprinter` — `(filePath: string) => string` — via the constructor for a cheaper, less precise comparison:
 
@@ -556,7 +570,7 @@ const observed = new ObservedState({
     const { size, mtimeMs } = statSync(filePath);
     return `${size}:${mtimeMs}`;
   },
-  maxEntries: 500,
+  maxEntries: 500, // illustrative: size yours to at least files plus directories (see above)
 });
 ```
 
