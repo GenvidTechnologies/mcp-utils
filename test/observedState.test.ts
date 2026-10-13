@@ -133,3 +133,70 @@ describe("ObservedState", () => {
     });
   });
 });
+
+describe("ObservedState.prime", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "obs-prime-"));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  /** root/a.txt, root/d1/b.txt, root/d2/c.txt: 3 files, 2 directories. */
+  function makeTree(): void {
+    fs.writeFileSync(path.join(root, "a.txt"), "a");
+    fs.mkdirSync(path.join(root, "d1"));
+    fs.writeFileSync(path.join(root, "d1", "b.txt"), "b");
+    fs.mkdirSync(path.join(root, "d2"));
+    fs.writeFileSync(path.join(root, "d2", "c.txt"), "c");
+  }
+
+  it("O9: reports complete with the default limit for 3 files and 2 directories", () => {
+    makeTree();
+    const state = new ObservedState();
+    expect(state.prime([root])).to.deep.equal({ files: 3, directories: 2, complete: true });
+    expect(state.size).to.equal(5);
+  });
+
+  it("O10: reports incomplete when maxEntries is smaller than the tree", () => {
+    makeTree();
+    const state = new ObservedState({ maxEntries: 3 });
+    expect(state.prime([root]).complete).to.be.false;
+  });
+
+  it("O10: prime fills gaps only and does not overwrite an existing entry", () => {
+    const file = path.join(root, "a.txt");
+    fs.writeFileSync(file, "before");
+    const state = new ObservedState();
+    state.record(file);
+    fs.writeFileSync(file, "after");
+    state.prime([root]);
+    // An overwriting prime would store the "after" fingerprint and report false here.
+    expect(state.isChanged(file)).to.be.true;
+  });
+
+  it("prime of a missing root counts as empty and complete", () => {
+    const state = new ObservedState();
+    expect(state.prime([path.join(root, "nope")])).to.deep.equal({
+      files: 0,
+      directories: 0,
+      complete: true,
+    });
+  });
+
+  it("prime with a throwing fingerprinter does not throw and is incomplete", () => {
+    makeTree();
+    const state = new ObservedState({
+      fingerprint: () => {
+        throw new Error("boom");
+      },
+    });
+    let summary: ReturnType<ObservedState["prime"]> | undefined;
+    expect(() => {
+      summary = state.prime([root]);
+    }).to.not.throw();
+    expect(summary?.complete).to.be.false;
+  });
+});
