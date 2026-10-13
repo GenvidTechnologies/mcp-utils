@@ -147,7 +147,9 @@ describe("ObservedState", () => {
       fs.rmSync(D);
       fs.mkdirSync(D);
       fs.writeFileSync(path.join(D, "a.txt"), "A");
-      state.prime([r]);
+      const summary = state.prime([r]);
+      // D's entry conflicts with the disk, so prime neither records nor descends into it.
+      expect(summary).to.deep.equal({ files: 0, directories: 0, complete: true });
       // Move out and back with no event in between the prime and the move-out.
       fs.renameSync(D, path.join(out, "D"));
       expect(state.isChanged(D)).to.be.true;
