@@ -14,6 +14,10 @@ sources:
     resource: https://github.com/GenvidTechnologies/construct3-chef/issues/284
     title: "construct3-chef#284 — the consumer that reported the spurious bumps"
     last_modified: 2026-10-13
+  - id: issue-29
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/29
+    title: "#29 — a directory renamed out, edited and renamed back reads as unchanged"
+    last_modified: 2026-10-14
 ---
 
 <!-- `stale_after` deliberately omitted — see the note in 0001. -->
@@ -31,8 +35,8 @@ it does not supersede it. What ADR-0002 decided still holds: the default
 fingerprint is a content hash (never `size`+`mtime`), L1 and L2 suppressions
 also `record()` into the ledger, an unreadable file produces a unique token so
 it fails open, and every failure degrades toward an extra bump rather than
-toward staleness (the pre-`start()` window and the round-trip known limit
-below excepted). This record adds two things ADR-0002 did not cover.
+toward staleness (the pre-`start()` window excepted). This record adds two
+things ADR-0002 did not cover.
 
 On Windows with last-access updates enabled, a recursive `fs.watch` reports
 events that are not content changes:
@@ -60,7 +64,7 @@ open.
 
 | Stored entry | Result |
 |---|---|
-| directory marker with the same identity | unchanged |
+| directory marker with the same identity | decided by its ctime stamp (see "Option A: a ctime stamp" below): unchanged when the stamp is trusted and equal, otherwise the subtree is re-checked |
 | directory marker with a different identity, or a directory/link flip | the old subtree is dropped, then evaluated as in the last row; **changed** if a live file was dropped or the kind flipped |
 | live file | changed (a file was replaced by a directory) |
 | none, or recorded absent | changed, unless the path lies under a primed root, the ledger is not lossy and it is not a link; then every file beneath it is evaluated and the directory is changed only if one of them is |
@@ -84,13 +88,16 @@ routes to a missed change, and each needed state the first design lacked.
   never matches, so a filesystem without usable inodes re-evaluates every
   directory event (see Consequences).
 - *A directory moved in by a self-write.* Layers 1 and 2 `record()` every
-  suppressed path, and `record()` stored a directory without its children. An
-  atomic install that renames a staging directory into place inside
-  `suppress()` therefore left a childless marker, and moving it out later
-  dropped nothing live and read as unchanged. A marker now has a `scanned`
-  flag, true when its children are known: created by `prime`, by a vouched
-  scan, or the directory was empty when recorded. An unscanned marker whose
-  directory goes missing or becomes a file reports changed.
+  suppressed path, and `record()` first stored a directory without its
+  children. An atomic install that renames a staging directory into place
+  inside `suppress()` therefore left a childless marker, and moving it out
+  later dropped nothing live and read as unchanged. A marker has a `scanned`
+  flag, true when its children are known to be in the ledger. It was first
+  set by `prime`, by a vouched scan, or for a directory that was empty when
+  recorded; the ctime re-check below changed `record()` so that it records a
+  directory's children too, and a marker is now unscanned only after a failed
+  walk. An unscanned marker whose directory goes missing or becomes a file
+  reports changed.
 - *Nothing to compare against.* With no marker (never seen, or evicted while
   its children survived), the vouched scan now also drops recorded files it
   did not find and reports that as a change; otherwise a swap that removed a
@@ -182,6 +189,70 @@ incomplete baseline is logged and degrades to today's extra bumps rather than a
 missed change. There is no `prime: false` option. Adding an option or raising
 the default later is additive, and consumers' tree sizes are unknown.
 
+### Option A: a ctime stamp on the marker, and a re-check when it moves
+
+Identity alone is not enough. A directory renamed out of the watched tree,
+changed outside it and renamed back to the same path, all before the watcher
+handles the move-out event (for example in one synchronous block, since
+`fs.watch` callbacks run afterwards), keeps its inode and raises no file event
+for the outside edit. Through a real `OptimisticWatcher` on Windows that
+round trip with an edit, an add or a remove moved `txId` by 0. A follow-on
+case (an empty directory, a round trip that adds a file, then a later move-out)
+moved it by 0 and then 0, while the control that handles the move-out first
+moved it by 2. [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29)
+tracked it.
+
+**A directory marker also stores the directory's ctime (`stamp`).** On a path
+that is still a directory with the same identity:
+
+- *Equal and trusted stamp:* unchanged. Nothing is walked or fingerprinted, so
+  listing and reading a directory stay quiet.
+- *Changed or untrusted stamp:* the whole subtree is re-checked. Every file
+  beneath the directory, at any depth, is evaluated; a recorded file that is
+  gone counts as a change; the ctime read *before* the walk is the one stored,
+  so a change made during the walk is seen next time.
+- *Unscanned marker, or a lossy ledger:* fail open. The children are
+  re-recorded silently and the directory reports changed.
+- *Racily clean stamp:* a ctime younger than one second, in the future, or 0
+  is stored as unknown, as a git index treats a file stamped within the
+  clock's granularity. The next event then takes the re-check.
+- *Link markers* stay identity-only.
+
+**`record()` accounts for a directory's children** whenever it records the
+directory: a new marker, a file replaced by a directory, or a same-identity
+directory whose ctime moved. A marker is unscanned only after a failed walk.
+This reverses the earlier rule above that `record()` stored a directory
+without its children, and that a marker was scanned only if empty.
+
+Measured on one Windows 11 / NTFS machine, Node 24.11.1, 2026-10-14. `lstat`
+on a directory: listing it changes only atime; editing a child in place changes
+only atime (not mtime or ctime); adding or removing a child changes ctime;
+renaming the directory out and back changes ctime, with inode and birthtime
+unchanged. WSL ext4 (Node 20) showed the same ctime behaviour; macOS/APFS was
+not measured. After the fix, the same real-watcher scenarios each moved `txId`
+by 1; listing, reading, a round trip with no change and self-writes moved it
+by 0.
+
+- **The window.** Windows kept an identical ctime in 12 of 20,000 immediate
+  rename-out-and-back round trips (Linux ext4 and tmpfs: 0 of 20,000), and a
+  fresh directory's ctime was up to about 2.2 ms ahead of `Date.now()`. That is
+  why a stamp is trusted only when it is at least a second old.
+- **The cost.** The hot path (trusted stamp) is about 0.1 ms at any size.
+  A re-check of a flat directory of 2 KB files takes 3-5 ms at 10 files,
+  13-35 ms at 100 and 142-176 ms at 1000. An external add or remove of a child
+  costs about two re-checks of that directory: one while the new ctime is still
+  racy, one to settle it. On a lossy ledger each ctime change can cost up to
+  two extra bumps. These are per-event figures; the start-up walk figures under
+  Measurements are a different cost.
+- **An accepted extra bump.** A self-write that creates a file with `expect()`
+  alone, with no `suppress()` window, can bump once when its directory's event
+  is handled before the file's event: the re-check finds the file before the
+  expected-path layer consumes that event. Measured 3 of 3 on a never-listed
+  directory; after `prime` and 3 s idle the file event came first 3 of 3, with
+  0 bumps. It is an extra bump, never a missed change. Removing it would need
+  `ObservedState` to see `ExpectedChanges`, a public API change, so it is
+  accepted. `suppress()` users are unaffected.
+
 ### Why "skip directory events" is wrong
 
 A plain rule that ignores directory events misses real changes. Measured on
@@ -258,6 +329,28 @@ Alternatives weighed and rejected for the first-read part:
 - **Prime per directory when its first event arrives.** The baseline would be
   taken after the content may already have changed.
 
+**The round-trip fix weighed its own options, lettered separately from the
+three above** (those cover the directory-aware ledger as a whole; these cover
+only how a same-identity directory is checked).
+
+- **Option A (chosen): ctime-gated re-check, with `record()` accounting for
+  children (variant A2).** See the Decision section for the rule. It keeps
+  the quiet hot path and needs no API change.
+- **Option B: re-check on every directory event, no stamp.** Rejected. Windows
+  fires a directory event for every in-place child edit and grandchild edit,
+  so every ordinary edit would re-hash the parent's subtree, about 150 ms per
+  1000 files.
+- **Option C: stat-gated re-check** (re-hash only files whose size, mtime or
+  ctime moved). Deferred. It is internal only and can be layered onto Option A
+  later without touching the API.
+- **Event-type pass-through** (mark a directory suspect on a `rename` event).
+  Excluded. `optimisticWatcher.ts` discards the `fs.watch` event type, and
+  passing it on would change the public `WatcherFactory.onEvent` signature. No
+  `rename` event for the directory arrived on Linux either.
+- **A1: `record()` refreshes the stamp only.** Rejected. It leaves stale child
+  fingerprints, so an in-place edit back to the original content is missed
+  (measured; pinned by O60).
+
 ## Consequences
 
 - **`start()` does a synchronous walk-and-hash** of every watched tree, once per
@@ -294,31 +387,44 @@ Alternatives weighed and rejected for the first-read part:
   the pre-existing behaviour of a string-keyed ledger. Sharing a ledger between
   watchers is a separate matter, handled by `prime` skipping subtrees already
   primed (see above).
-- **Known limit: a directory renamed out, edited, and renamed back reads as
-  unchanged.** If a directory is renamed out of the watched tree, changed
-  outside it (a file edited, added or removed), and renamed back to the same
-  path before the watcher handles the move-out event (for example in one
-  synchronous block, since `fs.watch` callbacks run afterwards), it keeps its
-  inode. The same-identity rule skips any child comparison, and the edit
-  happened outside the root, so no file event arrives. The directory's marker
-  also still claims its children are known, so files added during the round
-  trip are not recorded until their own events arrive; if none do (the
-  directory is later moved out or removed as a whole, which raises no
-  per-file event), that later change reads as unchanged too. If the move-out
-  event is handled before the move-back, the change is caught (measured).
-  Closing it
-  would mean re-hashing a directory's subtree on every directory event, and
-  on Windows listing a directory fires one, which is the read-only hot path
-  this record exists to keep quiet. It is deliberately not done;
-  [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
+- **A directory moved out and back is now reported, at a re-check's cost.** A
+  changed ctime re-checks the directory's whole subtree, so an external add or
+  remove of a child in a large directory costs about two re-checks of it (see
+  Option A for the figures), and on a lossy ledger each ctime change can cost
+  up to two extra bumps. The hot path (listing, reading, an unchanged
+  directory) stays at a single `lstat`.
+- **A self-write with `expect()` alone can bump once** when its directory's
+  event is handled before the file's event; see the accepted extra bump under
+  Option A.
+- **Residual: a clock stepping back.** A clock that steps back by more than the
+  one-second window between storing a stamp and a round trip could make the
+  stored stamp look trustworthy when it is not.
+- **Residual: macOS/APFS.** Whether renaming a directory out and back changes
+  its ctime there was not measured.
+- **Residual: link markers** keep identity-only matching and are not
+  re-checked.
 - **Known limit: identity is only as good as the filesystem's inode reuse.** A
   filesystem that hands a deleted directory's inode straight to a directory
   created in its place would let a swapped-in directory pass as the recorded
   one. That is plausible on filesystems that recycle inode numbers eagerly,
   but it was not measured on any filesystem here. The swap is caught only
   when the inode differs, so this is a limit of the check, not a claim that it
-  occurs.
+  occurs. The ctime stamp now guards it too, since a recycled inode would also
+  have to present an equal, trusted ctime (reasoning only, not measured).
 
 ## Related
 
 - [0002. ObservedState collapses duplicate watch events](0002-observed-state-collapses-duplicate-watch-events.md) — the record this refines.
+
+## A note on how this record was amended
+
+This record was amended in place, before 0.11.0 shipped, to add the ctime
+re-check (Option A under Decision) and to drop the earlier statement that a
+directory moved out, edited and moved back read as unchanged. It is an
+amendment and not a superseding record because the decision had not been
+released: no consumer ever ran the earlier rule, and the two halves describe
+one feature as it first shipped. `wiki/decisions/index.md` says an accepted
+record is superseded when the world moves; here the record was still being
+settled, so a second record would have left a reader to reconcile a rule that
+never reached anyone. The `description` is unchanged, since it names the
+decisions that remain true.

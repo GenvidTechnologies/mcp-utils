@@ -39,13 +39,15 @@ This file starts at 0.6.0. For earlier versions see the
     `lstat` itself fails, in which case the path is treated as a file and the
     fingerprinter fails open).
   - `isChanged` on a recorded directory is no longer always `true`; it is
-    `false` while it is the same directory. A directory marker stores the
-    directory's identity (its `lstat` inode; unknown never matches) and a
-    `scanned` flag (its children are known: from `prime`, a vouched scan, or
-    empty at `record` time). A different directory swapped in by rename drops
-    the old subtree and is evaluated like a never-seen one, and an unscanned
-    directory that goes missing reports `true` (e.g. one moved in by a
-    self-write, which `record`s it without its children). A never-seen
+    `false` while it is the same directory and nothing in it has been added,
+    removed or renamed. A directory marker stores the directory's identity
+    (its `lstat` inode; unknown never matches), its ctime, and a `scanned`
+    flag (its children are known: from `prime`, or any walk of them that
+    succeeded, `record` included). A different directory swapped in by rename
+    drops the old subtree and is evaluated like a never-seen one, and an
+    unscanned directory (one whose walk failed) that goes missing reports
+    `true`. `record` now records a directory's children along with the
+    directory. A never-seen
     directory still reports `true` unless it lies under a `prime`d root on a
     non-lossy ledger, where its files decide; with no marker to compare, that
     scan also drops recorded files it did not find and reports the change.
@@ -58,17 +60,28 @@ This file starts at 0.6.0. For earlier versions see the
     junction itself does. Keys have trailing slashes stripped (`D/` and `D`
     are one key); other spellings of one path (for example drive-letter case
     on Windows) remain separate keys.
-  - **Known limit:** a directory renamed out of the watched tree, edited
-    outside it, and renamed back before the watcher handles the move-out
-    event (for example in one synchronous block) reads as unchanged. It keeps
-    its identity and no file event arrives for the outside edit; its marker
-    still claims its children are known, so files added during the round trip
-    are not recorded until their own events arrive; if none do (the
-    directory is later moved out or removed as a whole, which raises no
-    per-file event), that later change reads as unchanged too. If the
-    move-out event is handled first, the change is caught. Closing it would
-    mean re-hashing a directory's subtree on every directory event, which
-    would undo the quiet read-only path; [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
+  - **A directory renamed out of the watched tree, edited outside it, and
+    renamed back before the watcher handles the move-out event (for example
+    in one synchronous block) is now reported.** It keeps its inode and no
+    file event arrives for the outside edit, so identity alone cannot see it;
+    the marker's ctime does, since renaming the directory itself changes it
+    (as does adding, removing or renaming an entry in it), while listing a
+    directory or editing a file in place does not.
+    An equal, trusted ctime means unchanged with nothing walked or
+    fingerprinted, so listing and reading stay quiet. A different ctime
+    re-checks the whole subtree at any depth, and a recorded file that has
+    gone counts as a change. An unscanned marker or a lossy ledger fails open
+    (the children are re-recorded and the directory reports changed). A ctime
+    younger than one second, in the future, or 0 is treated as unknown. Costs:
+    the unchanged path is a single `lstat`; a re-check of a flat directory of
+    2 KB files took 3-5 ms at 10 files, 13-35 ms at 100 and 142-176 ms at 1000
+    (Windows); an external add or remove of a child costs about two re-checks
+    of that directory, and on a lossy ledger each ctime change can cost up to
+    two extra bumps. A self-write that creates a file with `expect()` alone,
+    without a `suppress()` window, can bump once when its directory's event is
+    handled before the file's event (an extra bump, never a missed change).
+    Tracked as [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29);
+    see ADR-0008.
   - Entries are indexed by parent, so dropping a subtree costs that subtree
     rather than the whole ledger.
   - `OptimisticWatcher.start()` now **synchronously walks and hashes the
@@ -80,8 +93,7 @@ This file starts at 0.6.0. For earlier versions see the
     drops everything beneath it, whatever its own stored entry is, on
     `isChanged` and `record`, so a directory that comes back under a
     different identity is re-evaluated rather than matched against orphaned
-    child fingerprints (but see the known limit above for the same-identity
-    round trip).
+    child fingerprints.
   - A first event on a file that was in the baseline (under a primed root, on
     a complete ledger) no longer bumps `txId`; a file outside the baseline
     still bumps on its first event.

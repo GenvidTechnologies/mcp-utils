@@ -524,7 +524,7 @@ describe("ObservedState", () => {
         expect(state.isChanged(path.join(d, "a.txt"))).to.be.true; // never seen again
       });
 
-      it("O38: a directory recorded without its children, then moved out, reports changed", () => {
+      it("O38: a directory moved in by a self-write and recorded, then moved out, reports changed", () => {
         const r = path.join(root, "r");
         const staging = path.join(outside, "staging");
         fs.mkdirSync(r);
@@ -534,7 +534,7 @@ describe("ObservedState", () => {
         state.prime([r]);
         const moved = path.join(r, "D");
         fs.renameSync(staging, moved);
-        state.record(moved); // a suppressed self-write: marker only, children unrecorded
+        state.record(moved); // a suppressed self-write: records the directory and its children
         fs.renameSync(moved, path.join(outside, "D2"));
         expect(state.isChanged(moved)).to.be.true;
       });

@@ -98,9 +98,9 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * `isChanged` on a path that is now a directory:
  * a marker with the same identity (`lstat` inode; unknown identity never
  * matches) is decided by its change time. The marker stores the directory's
- * ctime: adding, removing or renaming an entry in the directory changes it,
- * and an inode alone cannot see a directory renamed out, edited and renamed
- * back. When the stored ctime equals the current one (and is not "racy", see
+ * ctime: renaming the directory itself changes it (as does adding, removing
+ * or renaming an entry in it), so a directory renamed out, edited and renamed
+ * back is seen, which an inode alone cannot do. When the stored ctime equals the current one (and is not "racy", see
  * below) the directory is unchanged and nothing is walked or fingerprinted.
  * Otherwise a `scanned` marker on a non-lossy ledger is re-checked: every file
  * beneath it, at any depth, is evaluated, a recorded file that is gone counts
