@@ -15,6 +15,22 @@ before. If a past entry itself needs correcting, add a new entry that says
 so; never edit or remove the old one in place. See `wiki-schema.md` for
 the full maintenance schema.
 
+## 2026-10-14
+
+* **Update**: failure-modes-that-report-success.md — added a short converse
+  section, "a verdict that reports a gap that isn't there," ahead of the
+  transferable rule, from the `#29` (ObservedState directory round trip)
+  mutation run, source `raw/2026-10-14-masked-mutation-false-red.md`. A
+  single-site mutation (M4) graded MISSED against a correct test (O58)
+  because the property is enforced twice, in the walk and in `dropUnfound`;
+  mutating both (M4b) caught it, and five other tests had caught the
+  walk-only defect all along. Folded into this page rather than a new one
+  because it already owns what a mutation harness's verdicts prove
+  (instance 12); it is not numbered as a thirteenth instance since it is the
+  opposite failure. Description widened to name the converse case (index row
+  updated to match), `generated.at` refreshed, so `stale_after` moved to
+  `2027-04-14` (six months, per the decay policy).
+
 ## 2026-10-13
 
 * **Update**: failure-modes-that-report-success.md — added a twelfth

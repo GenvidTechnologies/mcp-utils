@@ -1,12 +1,19 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Twelve ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Twelve ways a check on this stack passes without having checked, the converse case of a mutation verdict that reports a gap that isn't there, and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
-stale_after: 2027-04-13
-generated: { by: process:maintain-wiki, at: 2026-10-13T00:00:00Z }
+stale_after: 2027-04-14
+generated: { by: process:maintain-wiki, at: 2026-10-14T00:00:00Z }
 sources:
+  - id: masked-mutation
+    resource: ../raw/2026-10-14-masked-mutation-false-red.md
+    title: A mutation graded MISSED against a correct test, captured 2026-10-14 (the public record is the "Mutation evidence" comment on GenvidTechnologies/mcp-utils#29; the harness was an uncommitted session-scratchpad script)
+    last_modified: 2026-10-14
+  - id: masked-mutation-upstream
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/29#issuecomment-6175690417
+    title: Issue #29, "Mutation evidence" comment
   - id: invariant-route
     resource: ../raw/2026-10-13-invariant-fix-opens-new-route.md
     title: A fix that preserves an invariant opens a new route around it, captured 2026-10-13 (session-local transcript of the #27 implementation and review run; no public upstream, and the reproductions were discarded, but the behaviour is re-runnable from the commits named in the capture on branch feat/observedstate-directory-baseline)
@@ -605,6 +612,48 @@ safe. When the review finding being closed is about an invariant, ask which
 other holders of the shared state the fix touches, and run that case before
 accepting the new test as the proof.[^invariant-route]
 
+## The converse: a verdict that reports a gap that isn't there
+
+The twelve instances above are false greens. The same mutation harness that
+instance 12 describes can also produce a **false red**: it grades a test as
+missing a defect when the test is correct.[^masked-mutation]
+
+**The instance.** On the `#29` branch (the directory round-trip fix), the fix
+re-checks a directory's whole subtree when its ctime moves. `recordChildren`
+walks the subtree, and `dropUnfound` drops recorded files the walk did not
+find, descending every level. Mutation M4 cut only the walk to direct
+children. The test pledged to catch it, O58 (a round trip of an ancestor with
+an edit two levels down reports the ancestor changed), stayed green, and the
+harness graded M4 `MISSED`.[^masked-mutation]
+
+**The mechanism.** With only the walk cut, the grandchild is absent from the
+found set, `dropUnfound` drops it as a live file, and `isChanged` on the
+ancestor still returns true. Depth is enforced twice, so cutting one site leaves
+the other producing the same observable result. M4b cut both sites and O58
+failed, as pledged. The walk-only defect had been caught all along, by five
+other tests that share the helper (O28, O46, W7, W8, W19), and they sat in M4's
+list of extra failures. Strengthening O58 would have fixed nothing.[^masked-mutation]
+
+**How it relates to instance 12.** Instance 12 is the harness proving less than
+it seems: it confirms each listed rule is pinned and says nothing about
+unlisted properties. This is the harness claiming more than it knows: a single
+mutation site is not the same as the property, and a miss on one site is a
+statement about that site's redundancy, not about the test.
+
+**Countermeasure:** treat a miss as a hypothesis about the test, not a finding.
+When a single-site mutation goes uncaught, first look in the committed code for
+a second mechanism enforcing the same property. If one exists, mutate all of
+them together for the verdict. Then read the single-site run's extra failures,
+which are often the real catches of that site.[^masked-mutation]
+
+**Concrete tell:** a predicted test stays green while unpredicted tests fail on
+the same mutation. That means the defect is observable, so the question is
+which test sees it and why the pledged one does not. The answer decides whether
+the test or the prediction was wrong; here it was the prediction.
+
+This is the transferable rule applied in the other direction: name the
+mechanism that made the mutation survive before calling it a gap.
+
 ## The transferable rule
 
 All twelve instances converge on the same rule: **name the evidence, or report
@@ -683,6 +732,11 @@ not, can reach a property no one thought to list.
     of the `#27` run; the reproductions were discarded, so the capture is their
     only record, but the behaviour is re-runnable from the commits it names on
     branch `feat/observedstate-directory-baseline`.
+[^masked-mutation]: A mutation graded MISSED against a correct test, captured
+    2026-10-14 — `raw/2026-10-14-masked-mutation-false-red.md`. The public
+    record is the "Mutation evidence" comment on `#29`; the harness was a
+    session-scratchpad script never committed, so the comment and the capture
+    are its only durable record.
 [^source-absent]: A claim whose subject is absent from the source, captured
     2026-08-28 — session-local transcript of the `#19` run. The `semver` probe
     is re-runnable against this repo's resolved `semver`, and the commit it

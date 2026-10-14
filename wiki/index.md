@@ -29,7 +29,7 @@ wiki pages:
 
 Cross-cutting notes that generalize past this package.
 
-* [Failure modes that report success](failure-modes-that-report-success.md) - Twelve ways a check on this stack passes without having checked — and the evidence rule that catches them.
+* [Failure modes that report success](failure-modes-that-report-success.md) - Twelve ways a check on this stack passes without having checked, the converse case of a mutation verdict that reports a gap that isn't there, and the evidence rule that catches them.
 
 ## Process
 
