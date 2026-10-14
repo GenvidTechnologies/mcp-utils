@@ -958,11 +958,16 @@ describe("ObservedState.prime", () => {
     makeTree();
     const state = new ObservedState();
     state.prime([root]);
-    expect(state.prime([path.join(root, "a.txt")])).to.deep.equal({
+    // Created after the first prime, so it has no entry: only the skip can keep
+    // the second prime from recording it and hiding its creation.
+    const file = path.join(root, "new.txt");
+    fs.writeFileSync(file, "new");
+    expect(state.prime([file])).to.deep.equal({
       files: 0,
       directories: 0,
       complete: true,
     });
+    expect(state.isChanged(file)).to.be.true;
   });
 
   it("prime with a throwing fingerprinter does not throw and is incomplete", () => {
