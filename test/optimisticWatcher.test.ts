@@ -411,6 +411,444 @@ describe("OptimisticWatcher", () => {
       expect(w.txId).to.equal(2);
       expect(externalCalls).to.have.length(2);
     });
+
+    describe("real-fs pins", () => {
+      let tmpDir: string;
+
+      beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-pin-"));
+      });
+
+      afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      });
+
+      it("W3: a real content modification of a recorded file bumps exactly once", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const file = path.join(tmpDir, "a.txt");
+        fs.writeFileSync(file, "one");
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const fired = toPosixPath(path.resolve(file));
+        fireAll(fired); // first sight: records it
+        await Promise.resolve();
+        const before = w.txId;
+
+        fs.writeFileSync(file, "two");
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(1);
+      });
+
+      it("W1: three events on a recorded subdirectory do not bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const sub = path.join(tmpDir, "sub");
+        fs.mkdirSync(sub);
+        const observed = new ObservedState();
+        observed.record(sub);
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed,
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(sub));
+        fireAll(fired);
+        fireAll(fired);
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(0);
+      });
+
+      it("W10: observed: null — two events for a subdirectory both bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const sub = path.join(tmpDir, "sub");
+        fs.mkdirSync(sub);
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: null,
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(sub));
+        fireAll(fired);
+        fireAll(fired);
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(2);
+      });
+
+      it("W11: L1 suppress with a throwing fingerprinter — does not throw, no bump", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const externalCalls: string[] = [];
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: new ObservedState({
+            fingerprint: () => {
+              throw new Error("boom");
+            },
+          }),
+          onExternalChange: (p) => externalCalls.push(p),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const fired = toPosixPath(path.resolve(tmpDir, "w11.txt"));
+        await w.suppress(async () => {
+          fireAll(fired);
+          await Promise.resolve();
+        });
+
+        expect(w.txId - before).to.equal(0);
+        expect(externalCalls).to.have.length(0);
+      });
+
+      it("W12: L2 expect with a throwing fingerprinter — does not throw, no bump, no callback", async () => {
+        const { factory, fireAll } = makeFakeFactory();
+        const externalCalls: string[] = [];
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          observed: new ObservedState({
+            fingerprint: () => {
+              throw new Error("boom");
+            },
+          }),
+          onExternalChange: (p) => externalCalls.push(p),
+          watcherFactory: factory,
+        });
+        w.start();
+
+        const before = w.txId;
+        const target = path.join(tmpDir, "w12.txt");
+        w.expect(target);
+        fireAll(toPosixPath(path.resolve(target)));
+        await Promise.resolve();
+
+        expect(w.txId - before).to.equal(0);
+        expect(externalCalls).to.have.length(0);
+      });
+    });
+
+    describe("baseline priming (real fs)", () => {
+      let tmpDir: string;
+      let outside: string;
+      let sub: string;
+
+      beforeEach(() => {
+        tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-prime-"));
+        outside = fs.mkdtempSync(path.join(os.tmpdir(), "ow-out-"));
+        sub = path.join(tmpDir, "sub");
+        fs.mkdirSync(sub);
+      });
+
+      afterEach(() => {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      });
+
+      const fp = (p: string) => toPosixPath(path.resolve(p));
+      const make = (observed?: ObservedState | null, extra = {}) => {
+        const fake = makeFakeFactory();
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          watcherFactory: fake.factory,
+          ...(observed === undefined ? {} : { observed }),
+          ...extra,
+        });
+        return { w, fire: (p: string) => fake.fireAll(fp(p)) };
+      };
+      const linkType = process.platform === "win32" ? "junction" : "dir";
+      const removeLink = (l: string) =>
+        process.platform === "win32" ? fs.rmdirSync(l) : fs.unlinkSync(l);
+
+      it("W2: first event on a file that existed before start() does not bump", () => {
+        const f = path.join(sub, "a.txt");
+        fs.writeFileSync(f, "one");
+        const { w, fire } = make();
+        w.start();
+        fire(f);
+        expect(w.txId).to.equal(0);
+      });
+
+      it("W4: creating an empty directory, events on it and its parent, do not bump", () => {
+        const { w, fire } = make();
+        w.start();
+        const d = path.join(sub, "newdir");
+        fs.mkdirSync(d);
+        fire(d);
+        fire(sub);
+        expect(w.txId).to.equal(0);
+      });
+
+      it("W5: removing an empty directory that was in the baseline does not bump", () => {
+        const d = path.join(sub, "empty");
+        fs.mkdirSync(d);
+        const { w, fire } = make();
+        w.start();
+        fs.rmdirSync(d);
+        fire(d);
+        expect(w.txId).to.equal(0);
+      });
+
+      it("W6: a file replaced by a directory bumps once across path, parent, path", () => {
+        const x = path.join(sub, "x.txt");
+        fs.writeFileSync(x, "one");
+        const { w, fire } = make();
+        w.start();
+        fs.rmSync(x);
+        fs.mkdirSync(x);
+        fire(x);
+        fire(sub);
+        fire(x);
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W7: moving a non-empty directory in bumps once, its child adds nothing", () => {
+        const src = path.join(outside, "mv");
+        fs.mkdirSync(src);
+        fs.writeFileSync(path.join(src, "c.txt"), "child");
+        const { w, fire } = make();
+        w.start();
+        const dest = path.join(sub, "mv");
+        fs.renameSync(src, dest);
+        fire(dest);
+        expect(w.txId).to.equal(1);
+        fire(path.join(dest, "c.txt"));
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W8: moving a directory out bumps, moving it back with identical files bumps again", () => {
+        const inner = path.join(sub, "inner");
+        fs.mkdirSync(inner);
+        fs.writeFileSync(path.join(inner, "f.txt"), "same");
+        const { w, fire } = make();
+        w.start();
+        const away = path.join(outside, "inner");
+        fs.renameSync(inner, away);
+        fire(inner);
+        expect(w.txId).to.equal(1);
+        fs.renameSync(away, inner);
+        fire(inner);
+        expect(w.txId).to.equal(2);
+      });
+
+      it("W9: a lossy ledger (maxEntries 2) bumps for a new empty directory", () => {
+        fs.writeFileSync(path.join(tmpDir, "a.txt"), "a");
+        fs.writeFileSync(path.join(sub, "b.txt"), "b");
+        fs.writeFileSync(path.join(sub, "c.txt"), "c");
+        const { w, fire } = make(new ObservedState({ maxEntries: 2 }));
+        w.start();
+        const d = path.join(sub, "newdir");
+        fs.mkdirSync(d);
+        fire(d);
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W16: creating a directory link after start bumps once (link, then parent)", function () {
+        const target = path.join(outside, "tgt");
+        fs.mkdirSync(target);
+        const { w, fire } = make();
+        w.start();
+        const link = path.join(sub, "lnk");
+        try {
+          fs.symlinkSync(target, link, linkType);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "ENOSYS") return this.skip();
+          throw e;
+        }
+        fire(link);
+        fire(sub);
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W17: removing a directory link that existed before start: 0 then 1", function () {
+        const target = path.join(outside, "tgt");
+        fs.mkdirSync(target);
+        fs.writeFileSync(path.join(target, "keep.txt"), "keep");
+        const link = path.join(sub, "lnk");
+        try {
+          fs.symlinkSync(target, link, linkType);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "ENOSYS") return this.skip();
+          throw e;
+        }
+        const { w, fire } = make();
+        w.start();
+        fire(link);
+        expect(w.txId).to.equal(0);
+        removeLink(link);
+        fire(link);
+        expect(w.txId).to.equal(1);
+        expect(fs.existsSync(path.join(target, "keep.txt"))).to.equal(true);
+      });
+
+      it("W18: a self-referencing directory link (ELOOP) created before start() bumps on every event", function () {
+        // Created before start() so the baseline walk meets it too; classify
+        // falls back to "file" (stat -> ELOOP) and the fingerprinter's unique
+        // error token makes every event differ from the last.
+        const link = path.join(sub, "self");
+        try {
+          fs.symlinkSync(link, link, linkType);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === "EPERM" || code === "ENOSYS") return this.skip();
+          throw e;
+        }
+        const { w, fire } = make();
+        w.start();
+        fire(link);
+        fire(link);
+        expect(w.txId).to.equal(2);
+      });
+
+      it("W19: a directory moved in by a self-write, then moved out externally, bumps once", async () => {
+        const { w, fire } = make();
+        w.start();
+        const staging = path.join(outside, "staging");
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "a.txt"), "A");
+        const dest = path.join(sub, "D");
+        await w.suppress(async () => {
+          fs.renameSync(staging, dest);
+          fire(dest);
+        });
+        expect(w.txId).to.equal(0);
+        fs.renameSync(dest, path.join(outside, "D2"));
+        fire(dest);
+        expect(w.txId).to.equal(1);
+      });
+
+      it("W20: a primed directory swapped by two renames bumps once on a single event", () => {
+        const dest = path.join(sub, "D");
+        fs.mkdirSync(dest);
+        fs.writeFileSync(path.join(dest, "a.txt"), "A");
+        fs.writeFileSync(path.join(dest, "c.txt"), "C");
+        const { w, fire } = make();
+        w.start();
+        fs.renameSync(dest, path.join(outside, "Dold"));
+        const staging = path.join(outside, "staging");
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "a.txt"), "A");
+        fs.writeFileSync(path.join(staging, "b.txt"), "B");
+        fs.renameSync(staging, dest);
+        fire(dest); // one event, handled after both renames
+        // Exactly 1: the replaced directory is evaluated once; the old subtree is dropped, then b.txt is new.
+        expect(w.txId).to.equal(1);
+      });
+
+      // Two watchers share one ledger; A's raw events are held back and delivered by hand.
+      const twoWatchers = () => {
+        const shared = new ObservedState();
+        const fa = makeFakeFactory();
+        const fb = makeFakeFactory();
+        const mk = (f: ReturnType<typeof makeFakeFactory>) =>
+          new OptimisticWatcher({
+            watchDirs: [tmpDir],
+            expected: new ExpectedChanges(),
+            observed: shared,
+            watcherFactory: f.factory,
+          });
+        return { a: mk(fa), b: mk(fb), deliverToA: (p: string) => fa.fireAll(fp(p)) };
+      };
+
+      it("W21: a file turned directory after A started is still reported when B starts first", () => {
+        const P = path.join(sub, "P");
+        fs.writeFileSync(P, "file-v1");
+        const { a, b, deliverToA } = twoWatchers();
+        a.start();
+        fs.rmSync(P);
+        fs.mkdirSync(P);
+        fs.writeFileSync(path.join(P, "g.txt"), "G");
+        b.start(); // shares the ledger; must not record P's new state
+        deliverToA(P);
+        expect(a.txId).to.equal(1);
+      });
+
+      it("W22: a file created after A started is still reported when B starts first", () => {
+        const { a, b, deliverToA } = twoWatchers();
+        a.start();
+        const Q = path.join(sub, "Q.txt");
+        fs.writeFileSync(Q, "new");
+        b.start();
+        deliverToA(Q);
+        expect(a.txId).to.equal(1);
+      });
+
+      it("W13: restart does not rebuild the baseline", () => {
+        fs.writeFileSync(path.join(sub, "a.txt"), "one");
+        let calls = 0;
+        const { w } = make(
+          new ObservedState({ fingerprint: () => (++calls, "fp") }),
+        );
+        w.start();
+        const afterFirst = calls;
+        expect(afterFirst).to.be.greaterThan(0);
+        w.stop();
+        w.start();
+        expect(calls).to.equal(afterFirst);
+      });
+
+      it("W14: the watcher factory is called before the first fingerprint", () => {
+        fs.writeFileSync(path.join(sub, "a.txt"), "one");
+        const seq: string[] = [];
+        const fake = makeFakeFactory();
+        let fpSeen = false;
+        const w = new OptimisticWatcher({
+          watchDirs: [tmpDir],
+          expected: new ExpectedChanges(),
+          watcherFactory: (dir, onEvent) => {
+            seq.push("factory");
+            return fake.factory(dir, onEvent);
+          },
+          observed: new ObservedState({
+            fingerprint: () => {
+              if (!fpSeen) seq.push("fingerprint");
+              fpSeen = true;
+              return "fp";
+            },
+          }),
+        });
+        w.start();
+        expect(seq).to.include("fingerprint");
+        expect(seq.indexOf("factory")).to.be.lessThan(seq.indexOf("fingerprint"));
+      });
+
+      it("W15: logger receives the baseline summary, and a separate incomplete line when lossy", () => {
+        fs.writeFileSync(path.join(tmpDir, "a.txt"), "a");
+        fs.writeFileSync(path.join(sub, "b.txt"), "b");
+        fs.writeFileSync(path.join(sub, "c.txt"), "c");
+        const normal: string[] = [];
+        make(undefined, { logger: (...a: unknown[]) => normal.push(a.join(" ")) }).w.start();
+        expect(normal.filter((l) => /baseline/i.test(l)).length).to.be.at.least(1);
+        expect(normal.filter((l) => /incomplete/i.test(l))).to.have.length(0);
+
+        const lossy: string[] = [];
+        make(new ObservedState({ maxEntries: 2 }), {
+          logger: (...a: unknown[]) => lossy.push(a.join(" ")),
+        }).w.start();
+        expect(lossy.filter((l) => /baseline/i.test(l)).length).to.be.at.least(2);
+        expect(lossy.filter((l) => /incomplete/i.test(l)).length).to.be.at.least(1);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------

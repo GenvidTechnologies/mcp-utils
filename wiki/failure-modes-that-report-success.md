@@ -1,12 +1,16 @@
 ---
 type: practice-note
 title: Failure modes that report success
-description: Eleven ways a check on this stack passes without having checked — and the evidence rule that catches them.
+description: Twelve ways a check on this stack passes without having checked — and the evidence rule that catches them.
 tags: [verification, testing, windows, ci, tooling]
 status: stable
-stale_after: 2027-03-11
-generated: { by: process:maintain-wiki, at: 2026-09-11T00:00:00Z }
+stale_after: 2027-04-13
+generated: { by: process:maintain-wiki, at: 2026-10-13T00:00:00Z }
 sources:
+  - id: invariant-route
+    resource: ../raw/2026-10-13-invariant-fix-opens-new-route.md
+    title: A fix that preserves an invariant opens a new route around it, captured 2026-10-13 (session-local transcript of the #27 implementation and review run; no public upstream, and the reproductions were discarded, but the behaviour is re-runnable from the commits named in the capture on branch feat/observedstate-directory-baseline)
+    last_modified: 2026-10-13
   - id: vacuous-corpus
     resource: ../raw/2026-09-11-vacuous-differential-corpus.md
     title: A differential check whose corpus never exercises the positive case, captured 2026-09-11 (session-local transcript of the #25 run; the probe was a discarded scratchpad artifact, but every command quoted is re-runnable against the branch named in the capture)
@@ -65,8 +69,8 @@ meant to red-flag came back green, and that green was read as "my test is
 vacuous" — nearly triggering a rewrite of a test that was correct all
 along.[^global-claude-md][^capture]
 
-Eleven instances of this shape, drawn from this repo and its operating
-environment, follow. The last five differ from the rest in an important way,
+Twelve instances of this shape, drawn from this repo and its operating
+environment, follow. The last six differ from the rest in an important way,
 and are placed last for that reason: the first six are checks that did not
 run; the seventh and eighth ran correctly and measured the wrong thing — the
 seventh at the wrong entry point, the eighth over the wrong corpus; the
@@ -77,10 +81,13 @@ arrives there from the opposite direction, because an agent whose whole job
 was to verify someone else's work *reported* it as having run; and the
 eleventh ran correctly, over a corpus with nothing missing from it, and still
 could not carry its claim, because the cases that would have distinguished the
-claim from its negation were 0.56% of what it measured. The first six are
-silent; the tenth is asserted; the eleventh is arithmetic.
+claim from its negation were 0.56% of what it measured; and the twelfth ran
+correctly over every scenario anyone had listed, and still could not see that
+the fix it was guarding had broken a property nobody had listed. The first six
+are silent; the tenth is asserted; the eleventh is arithmetic; the twelfth is
+a gap in what was imagined.
 
-## The eleven instances
+## The twelve instances
 
 ### 1. An unprivileged Windows symlink test skips instead of failing
 
@@ -544,9 +551,63 @@ well-formed; a letters-only alphabet would have yielded **zero** accepted
 inputs, a clean `mismatches: 0`, and an identical-looking
 transcript.[^vacuous-corpus]
 
+### 12. A fix that preserves an invariant opens a new route around it
+
+**Appears to do:** repair a defect in `ObservedState` (`#27`, review finding
+W-1) while keeping the design's one governing rule: an imprecision must degrade
+toward an **extra** `txId` bump, never toward a **missed** change (ADR-0002,
+restated in ADR-0008). The fix, `b7d58f4`, reconciled conflicting entries in
+`prime()`'s walk, and the evidence behind it was as strong as this repo
+produces: lint, typecheck, build and 332 passing tests; a 26-mutation harness
+with every mutation caught and a clean no-op control; an 18-scenario Windows
+end-to-end run against the real `fs.watch`; and a validator round that
+passed every behavioural row.[^invariant-route]
+
+**Actually does:** turns an extra bump into a missed change, on a route none of
+those checks modelled. The round-4 reviewer imagined **two watchers sharing one
+ledger, with one watcher's events still queued**. Watcher A primes and has an
+event pending for path P; P changes from a file to a directory; watcher B
+starts and its `prime()` reconciles P, recording the directory; A's queued
+event then compares equal to the freshly recorded state and A's `txId` does not
+move. Measured: A's delta was **0** at the fix and **1** at the commit before
+it. A second route with the same root cause, B's `prime()` recording a file
+created between the two starts, also gave 0.[^invariant-route]
+
+**The discriminating detail** is that the test written with the fix, O44,
+**asserted the regressed behaviour**: after the second `prime()`, `isChanged`
+returns `false`. So the suite did not merely miss the bug, it defended it. The
+mutation harness agreed: the reconcile's own mutation (M24) was caught by O44,
+which confirmed the rule was pinned exactly as written, and says nothing about
+whether the rule was safe. A mutation harness proves each *existing* rule is
+pinned; it cannot notice that a new rule broke an *unlisted* property. The
+suite, the harness and the end-to-end run each check scenarios someone wrote
+down, so a route that exists only in a scenario nobody wrote down is outside
+all three. This is instance 11's cousin: there the corpus was complete but
+dominated by uninformative cases; here the enumeration was accurate and
+exhaustive over what had been imagined, and the defect lay in what had
+not.[^invariant-route]
+
+**Countermeasure:** for an invariant that has to hold across arbitrary
+operation sequences, add a check that **explores sequences against ground
+truth** instead of enumerating more scenarios. `test/observedState.fuzz.test.ts`
+is a seeded random-sequence test of the no-missed-change invariant; run against
+the mutation harness it catches 7 of 29 mutations by itself, so it covers
+ground the enumerated tests do not. The fix itself was a revert: W-1 was caused
+by `prime()` *descending* into a directory recorded as a file, not by the
+stale entry, so `prime()` now never overwrites an entry and never descends
+into a conflicting one, and O44's expected value was inverted. Tests W21 and
+W22 pin the two-watcher routes.[^invariant-route]
+
+**Concrete tell:** a green test whose subject is the fix itself. A test
+authored alongside a fix encodes the fix's assumption, so its passing is
+evidence that the code does what the fix intended, not that the intention was
+safe. When the review finding being closed is about an invariant, ask which
+other holders of the shared state the fix touches, and run that case before
+accepting the new test as the proof.[^invariant-route]
+
 ## The transferable rule
 
-All eleven instances converge on the same rule: **name the evidence, or report
+All twelve instances converge on the same rule: **name the evidence, or report
 the gap.** A skipped test is not a passing test.[^review-ctx] A green check is
 only evidence if you can state, concretely, what it actually executed —
 which symlink type it created, which prose line it diffed against which data,
@@ -583,6 +644,15 @@ marking such a claim unverified is where the work starts rather than where it
 ends — the flag is a handoff, and an unclaimed handoff is indistinguishable from
 a check that passed.
 
+Instance 12 passes all three questions too: its checks ran, measured the right
+behaviour, and covered every claim in reach. So ask a fourth of any fix to a
+property that must hold in general: **which property did this change break
+that nobody listed?** Enumerated scenarios, a mutation harness and an
+end-to-end run all grade what was written down, and a test written with the
+fix grades the fix's own assumption. Only a check that explores operation
+sequences against ground truth, or a reviewer who models a case the author did
+not, can reach a property no one thought to list.
+
 [^capture]: Assembled verbatim excerpts on checks that report success while
     not checking, captured 2026-08-16.
 [^move-sweep]: Reference-sweep inventory blind to references *from* a moved
@@ -607,6 +677,12 @@ a check that passed.
     of the `#25` run; the probe itself was a scratchpad artifact and was
     discarded, so the capture is its only record, but every command it quotes
     is re-runnable against branch `feat/txtoken-parse-failure-reason`.
+[^invariant-route]: A fix that preserves an invariant opens a new route around
+    it, captured 2026-10-13 —
+    `raw/2026-10-13-invariant-fix-opens-new-route.md`. Session-local transcript
+    of the `#27` run; the reproductions were discarded, so the capture is their
+    only record, but the behaviour is re-runnable from the commits it names on
+    branch `feat/observedstate-directory-baseline`.
 [^source-absent]: A claim whose subject is absent from the source, captured
     2026-08-28 — session-local transcript of the `#19` run. The `semver` probe
     is re-runnable against this repo's resolved `semver`, and the commit it

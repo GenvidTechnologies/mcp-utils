@@ -52,9 +52,20 @@ export interface OptimisticWatcherOptions {
    * last accounted for is suppressed instead of bumping `txId` again.
    *
    * - `undefined` (default, i.e. omitted) — a fresh `new ObservedState()`
-   *   is constructed automatically, so Layer 3 is **on by default**.
+   *   is constructed automatically, so Layer 3 is **on by default**. The
+   *   first `start()` synchronously walks and hashes the watched trees once
+   *   (a baseline), so a first read-only event on a pre-existing file and
+   *   directory events don't bump (given a complete baseline on a filesystem
+   *   with inodes; otherwise directory events are re-evaluated and may bump,
+   *   failing open). Size `maxEntries` to at least files plus
+   *   directories, or the baseline is incomplete (logged) and extra bumps
+   *   result.
+   *   A write landing between a consumer's own read of the tree and
+   *   `start()` is part of the baseline and is not reported — start the
+   *   watcher before reading the tree.
    * - `null` — Layer 3 is disabled (opt out), restoring the pre-Layer-3
-   *   behavior of bumping on every non-suppressed event.
+   *   behavior: every event not suppressed by L1/L2 bumps, including
+   *   directory events and first-read access-time events; no baseline.
    * - An explicit `ObservedState` instance — reuse a shared/pre-configured
    *   ledger (e.g. one with a custom fingerprinter, for tests).
    */
@@ -110,8 +121,23 @@ export interface OptimisticWatcherOptions {
  * tick (see ADR-0002). A custom `Fingerprinter` inherits that
  * responsibility.
  *
+ * The first `start()` synchronously walks and hashes the watched trees once
+ * to seed the ledger (a baseline), after the watch handles are created. So a
+ * first read-only event on a pre-existing file no longer bumps, and, given a
+ * complete baseline on a filesystem with inodes, directory events don't bump
+ * (otherwise they are re-evaluated and may bump, failing open). A restart
+ * does not re-prime. Size
+ * `maxEntries` to at least files plus directories: otherwise the baseline is
+ * incomplete (logged) and the watcher falls back to extra bumps.
+ *
+ * Start the watcher before reading the tree: a write that lands between a
+ * consumer's own read and `start()` is part of the baseline and is not
+ * reported.
+ *
  * Pass `observed: null` to disable Layer 3 entirely and restore pre-Layer-3
- * behavior (every non-suppressed event bumps `txId`).
+ * behavior: every event not suppressed by L1/L2 bumps `txId`, explicitly
+ * including directory events and first-read access-time events, and no
+ * baseline is taken.
  *
  * ## Cancelled-write idiom (caller's responsibility)
  *
@@ -146,6 +172,7 @@ export class OptimisticWatcher {
   private _txId = 0;
   private suppressDepth = 0;
   private handles: WatchHandle[] = [];
+  private primed = false;
 
   constructor(options: OptimisticWatcherOptions) {
     this.watchDirs = options.watchDirs;
@@ -234,6 +261,7 @@ export class OptimisticWatcher {
       this.handles.push(handle);
     }
     this.logger?.("OptimisticWatcher started, watching dirs:", this.watchDirs);
+    this.primeBaseline();
   }
 
   /**
@@ -255,17 +283,57 @@ export class OptimisticWatcher {
   // Internal
   // ---------------------------------------------------------------------------
 
+  /**
+   * Prime the observed ledger once per instance, after the watch handles
+   * exist. fs.watch callbacks run on the event loop, so none fire during
+   * this synchronous walk: a write landing before the walk reaches its file
+   * is already in the stored fingerprint, one landing after compares unequal
+   * and bumps. Priming before watching would leave a window in which a write
+   * is never reported. A restart does not re-prime. Never throws.
+   */
+  private primeBaseline(): void {
+    if (this.primed || !this.observed) return;
+    this.primed = true;
+    try {
+      const s = this.observed.prime(this.watchDirs.map((d) => path.resolve(d)));
+      this.logger?.(
+        `OptimisticWatcher baseline: ${s.files} files, ${s.directories} directories`,
+      );
+      if (!s.complete) {
+        this.logger?.(
+          "OptimisticWatcher baseline incomplete: size ObservedState maxEntries to at least files plus directories; falling back to extra bumps",
+        );
+      }
+    } catch (err) {
+      this.logger?.("OptimisticWatcher baseline failed, continuing without:", err);
+    }
+  }
+
+  /**
+   * Record `filename` in the observed ledger without ever throwing. A throwing
+   * fingerprinter must not escape `handleEvent` from L1/L2: the event is
+   * already being suppressed, so a failed record only costs a possible extra
+   * bump on a later L3 check (the path stays unrecorded).
+   */
+  private safeRecord(filename: string): void {
+    try {
+      this.observed?.record(filename);
+    } catch (err) {
+      this.logger?.("record threw, ledger not updated:", filename, err);
+    }
+  }
+
   private handleEvent(filename: string): void {
     // Layer 1: synchronous suppress window
     if (this.suppressDepth > 0) {
-      this.observed?.record(filename);
+      this.safeRecord(filename);
       this.logger?.("suppressed (L1):", filename);
       return;
     }
 
     // Layer 2: pre-registered expected path
     if (this.expected.consume(filename)) {
-      this.observed?.record(filename);
+      this.safeRecord(filename);
       this.logger?.("suppressed (L2):", filename);
       return;
     }

@@ -11,6 +11,106 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **`ObservedState.prime(roots)` and the exported `PrimeSummary` type.**
+  `prime` walks the given directories and records a baseline — directories
+  (and links to directories) as markers, files as fingerprints — filling gaps
+  only and never throwing. It never overwrites an existing entry, does not
+  descend into a path whose entry conflicts with the disk (the event path
+  reports it, failing open), and skips subtrees already primed by an earlier
+  call (so two watchers sharing one ledger cannot swallow each other's queued
+  events). It returns `PrimeSummary`
+  (`{ files, directories, complete }`); `complete: false` means the ledger
+  can no longer vouch for the primed tree (a read failed, or a real
+  fingerprint was evicted).
+
+### Changed
+
+- **`ObservedState` classifies directories, and `OptimisticWatcher.start()`
+  primes a baseline, so read-only activity and directory events stop bumping
+  `txId` (given a complete baseline on a filesystem with inodes; on a lossy
+  ledger or a volume without inodes, directory events are re-evaluated and may
+  bump).** On Windows with last-access updates enabled, listing a directory
+  or first-reading a file fired a watch event that read as a content change.
+  Observable differences:
+  - `record` no longer fingerprints a directory (or a link to one): it stores
+    a marker, and no `Fingerprinter` is called with a directory (unless
+    `lstat` itself fails, in which case the path is treated as a file and the
+    fingerprinter fails open).
+  - `isChanged` on a recorded directory is no longer always `true`; it is
+    `false` while it is the same directory. A directory marker stores the
+    directory's identity (its `lstat` inode; unknown never matches) and a
+    `scanned` flag (its children are known: from `prime`, a vouched scan, or
+    empty at `record` time). A different directory swapped in by rename drops
+    the old subtree and is evaluated like a never-seen one, and an unscanned
+    directory that goes missing reports `true` (e.g. one moved in by a
+    self-write, which `record`s it without its children). A never-seen
+    directory still reports `true` unless it lies under a `prime`d root on a
+    non-lossy ledger, where its files decide; with no marker to compare, that
+    scan also drops recorded files it did not find and reports the change.
+    On a filesystem without inode numbers the identity is unknown and the
+    path is always re-evaluated, so every directory event on such a volume
+    bumps and costs a scan of the subtree (an extra bump, not a missed
+    change; not measured, no such volume was available).
+  - A dropped link marker counts as a dropped live entry, so removing a
+    directory that holds only a junction reads as changed, as removing the
+    junction itself does. Keys have trailing slashes stripped (`D/` and `D`
+    are one key); other spellings of one path (for example drive-letter case
+    on Windows) remain separate keys.
+  - **Known limit:** a directory renamed out of the watched tree, edited
+    outside it, and renamed back before the watcher handles the move-out
+    event (for example in one synchronous block) reads as unchanged. It keeps
+    its identity and no file event arrives for the outside edit; its marker
+    still claims its children are known, so files added during the round trip
+    are not recorded until their own events arrive; if none do (the
+    directory is later moved out or removed as a whole, which raises no
+    per-file event), that later change reads as unchanged too. If the
+    move-out event is handled first, the change is caught. Closing it would
+    mean re-hashing a directory's subtree on every directory event, which
+    would undo the quiet read-only path; [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29) tracks it.
+  - Entries are indexed by parent, so dropping a subtree costs that subtree
+    rather than the whole ledger.
+  - `OptimisticWatcher.start()` now **synchronously walks and hashes the
+    watched trees once** (once per instance, after the watch handles are
+    created; a restart does not re-prime). Measured cost: about 12 ms for 49
+    files, up to roughly 0.2-1.7 s for 1000 files of 32 KB (see ADR-0008).
+  - **`forget(path)` now removes the path and every entry beneath it**
+    (previously only the key). A path that is a file or missing likewise
+    drops everything beneath it, whatever its own stored entry is, on
+    `isChanged` and `record`, so a directory that comes back under a
+    different identity is re-evaluated rather than matched against orphaned
+    child fingerprints (but see the known limit above for the same-identity
+    round trip).
+  - A first event on a file that was in the baseline (under a primed root, on
+    a complete ledger) no longer bumps `txId`; a file outside the baseline
+    still bumps on its first event.
+  - The scan of a never-seen directory under a primed root hashes its files
+    synchronously on the event path, at a cost proportional to that subtree.
+  - A throwing custom `Fingerprinter` no longer throws out of an L1/L2
+    suppression's ledger `record`: the throw is now caught and logged, and the
+    path stays unrecorded (previously it escaped the event handler).
+  - `observed: null` is unchanged: every event not suppressed by L1/L2 bumps,
+    including directory events and first-read access-time events, and no
+    baseline is taken.
+
+  **Size `maxEntries` to at least files plus directories.** Otherwise the
+  baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls
+  back to extra bumps rather than a missed change.
+
+  **Start the watcher before reading the tree.** A write that lands between a
+  consumer's own read and `start()` becomes part of the baseline and is not
+  reported. Rationale and rejected alternatives:
+  [ADR-0008](wiki/decisions/0008-observed-state-classifies-directories-and-primes-at-start.md).
+
+  **Shipping as 0.11.0, a minor bump, not a patch — and consumers pinned at
+  `^0.10.0` will *not* pick this up automatically.** Below 1.0.0 a caret pin
+  excludes every minor bump: `^0.10.0` resolves as `>=0.10.0 <0.11.0`, so it
+  does not reach them on a plain install; they must widen their range to
+  `^0.11.0` deliberately. `construct3-chef`
+  ([construct3-chef#284](https://github.com/GenvidTechnologies/construct3-chef/issues/284))
+  is the consumer waiting on this.
+
 ## [0.10.0] - 2026-09-11
 
 ### Changed

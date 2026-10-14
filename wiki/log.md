@@ -17,6 +17,17 @@ the full maintenance schema.
 
 ## 2026-10-13
 
+* **Update**: failure-modes-that-report-success.md — added a twelfth
+  instance, "A fix that preserves an invariant opens a new route around it,"
+  from the `#27` (ObservedState directory baseline) run, source
+  `raw/2026-10-13-invariant-fix-opens-new-route.md`. The `prime()`
+  reconciliation fix passed the suite, a 26-mutation harness, an 18-scenario
+  Windows end-to-end run and the validator, yet turned an extra bump into a
+  missed change when two watchers shared one ledger; its own test (O44)
+  asserted the regressed behaviour. Added a fourth question to the transferable
+  rule, updated every count to twelve, and refreshed `generated.at`, so
+  `stale_after` moved to `2027-04-13` (six months, per the decay policy).
+
 * **Correction**: failure-modes-that-report-success.md — `stale_after` moved
   from `2027-09-11` back to `2027-03-11`. The 2026-09-11 ingest set it a year
   past `generated.at`, but the page's claims are pinned to tool versions
