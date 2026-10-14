@@ -386,24 +386,13 @@ export class ObservedState {
       let changed = true;
       let scanned = link;
       if (vouched) {
-        let files: string[] | undefined;
-        try {
-          files = walkFiles(filePath, () => true);
-        } catch {
-          files = undefined;
-        }
-        if (files !== undefined) {
-          changed = false;
+        // With no marker to compare (never seen, or evicted while its
+        // children survived), a recorded file the scan did not find was
+        // removed: that is a change, and its entry is stale.
+        const res = this.recordChildren(key, filePath, true, prev?.kind !== "dir");
+        if (res.ok) {
+          changed = res.changed;
           scanned = true;
-          // Evaluate every file (no short-circuit) so each one is recorded.
-          for (const f of files) if (this.isChanged(f)) changed = true;
-          // With no marker to compare (never seen, or evicted while its
-          // children survived), a recorded file the scan did not find was
-          // removed: that is a change, and its entry is stale.
-          if (prev?.kind !== "dir") {
-            const found = new Set(files.map((f) => ObservedState.normalize(f)));
-            if (this.dropUnfound(key, found)) changed = true;
-          }
         }
       }
       this.touch(key, { kind: "dir", link, id, scanned, stamp });
@@ -433,6 +422,45 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     this.remove(key);
     this.dropBeneath(key);
+  }
+
+  /**
+   * Walk the subtree at `dirPath` (`key` is its normalized form) with
+   * `walkFiles` and record every file found. Returns `{ ok, changed }`:
+   * `ok: false` means the walk threw, nothing was recorded, and the caller must
+   * not mark the directory `scanned` (`changed` is then `true`, the fail-open
+   * answer). Otherwise `changed` is meaningful only when `report` is true.
+   * - `report: true` runs `isChanged` on each found file (no short-circuit, so
+   *   each is recorded) and reports whether any differed, including a dropped
+   *   live entry when `dropStale` is set.
+   * - `report: false` is silent: each found file is `record`ed, `changed` is
+   *   `false`.
+   * `dropStale` removes recorded files beneath `key` the walk did not find via
+   * `dropUnfound`; the caller decides when that is valid.
+   */
+  private recordChildren(
+    key: string,
+    dirPath: string,
+    report: boolean,
+    dropStale: boolean,
+  ): { ok: boolean; changed: boolean } {
+    let files: string[];
+    try {
+      files = walkFiles(dirPath, () => true);
+    } catch {
+      return { ok: false, changed: true };
+    }
+    let changed = false;
+    for (const f of files) {
+      if (report) {
+        if (this.isChanged(f)) changed = true;
+      } else this.record(f);
+    }
+    if (dropStale) {
+      const found = new Set(files.map((f) => ObservedState.normalize(f)));
+      if (this.dropUnfound(key, found) && report) changed = true;
+    }
+    return { ok: true, changed };
   }
 
   /**
