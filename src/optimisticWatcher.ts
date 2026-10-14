@@ -27,7 +27,7 @@ export type WatcherFactory = (
 
 /** Options for {@link OptimisticWatcher}. */
 export interface OptimisticWatcherOptions {
-  /** Directories to watch (each gets its own watcher handle). */
+  /** Directories, or single regular files, to watch (each gets its own watcher handle). */
   watchDirs: string[];
   /**
    * Shared ExpectedChanges registry. Call {@link OptimisticWatcher.expect} (or

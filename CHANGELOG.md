@@ -11,6 +11,32 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ObservedState.prime()` records a file root as a file.** A root that is a
+  regular file, or a link to one, used to be walked as a directory: the read
+  failed, the ledger went lossy, nothing was recorded and `prime` returned
+  `{ files: 0, directories: 0, complete: false }`. A watcher over a single
+  file therefore had no baseline, its first read-only event bumped `txId`, and
+  `start()` logged a misleading "baseline incomplete ... `maxEntries`"
+  warning. Such a root is now fingerprinted and recorded as a file (counted in
+  `files`, fill-gaps-only, the ledger not marked lossy), so `prime([file])`
+  returns `{ files: 1, directories: 0, complete: true }`. Directory, missing,
+  directory-link and special-file roots are unchanged.
+- **The default `watcherFactory` reports a single-file watch root's events at
+  the file's own path.** For a `watchDirs` entry that is a regular file, events
+  were reported at `<file>/<basename>`, a path that never exists, so Layer 3
+  fingerprinted it as absent every time and suppressed every edit after the
+  first as unchanged (a missed change; observed: three distinct edits produced
+  one report). The factory now checks the root when it is created and watches
+  a regular file non-recursively, mapping every event to the file's own
+  normalized path. Directory roots are unchanged.
+
+Both fixes change observable output, so this ships as a **minor** release
+(0.12.0). Below 1.0.0 a caret range excludes minor bumps, so a `^0.11.0`
+consumer does not receive it automatically and must widen its range to adopt
+it. See [#33](https://github.com/GenvidTechnologies/mcp-utils/issues/33).
+
 ## [0.11.0] - 2026-10-14
 
 ### Added
