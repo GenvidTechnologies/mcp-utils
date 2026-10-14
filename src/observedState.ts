@@ -274,7 +274,9 @@ export class ObservedState {
    *   a root is not descended into. The root is still recorded as primed.
    * Never throws: a directory that cannot be read, or a fingerprinter that
    * throws, marks the ledger incomplete and the walk continues. A missing root
-   * counts as empty. The roots themselves get no marker. The summary counts
+   * counts as empty. A root that is a regular file, or a link to one, is
+   * recorded as a file (counted in `files`) under the same fill-gaps-only rule;
+   * directory roots themselves get no marker. The summary counts
    * only what this call added. `complete: false` means the ledger can no
    * longer vouch; size `maxEntries` to at least files plus directories.
    */
@@ -285,10 +287,32 @@ export class ObservedState {
       if (this.isUnderPrimedRoot(root)) continue;
       const earlier = new Set(this.primedRoots);
       this.primedRoots.push(key);
+      if (this.isFileRoot(root)) {
+        if (this.entries.has(key)) continue; // never overwrite
+        try {
+          this.touch(key, { kind: "file", fp: this.fingerprint(root) });
+          summary.files++;
+        } catch {
+          this.lossy = true;
+        }
+        continue;
+      }
       this.walk(root, summary, earlier);
     }
     summary.complete = !this.lossy;
     return summary;
+  }
+
+  /** True when `p` is a regular file or a link to one. Anything else (or any error) is left to `walk`. */
+  private isFileRoot(p: string): boolean {
+    try {
+      const st = lstatSync(p, { throwIfNoEntry: false });
+      if (!st) return false;
+      if (st.isFile()) return true;
+      return st.isSymbolicLink() && statSync(p).isFile();
+    } catch {
+      return false;
+    }
   }
 
   /** Returns false when `dir` could not be listed (it vanished, or the read failed). */
