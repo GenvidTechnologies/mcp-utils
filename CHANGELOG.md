@@ -62,7 +62,9 @@ This file starts at 0.6.0. For earlier versions see the
     on Windows) remain separate keys.
   - **A directory renamed out of the watched tree, edited outside it, and
     renamed back before the watcher handles the move-out event (for example
-    in one synchronous block) is now reported.** It keeps its inode and no
+    in one synchronous block) is now reported when a file was edited, added
+    or removed (an empty subdirectory added or removed is not, as
+    elsewhere).** It keeps its inode and no
     file event arrives for the outside edit, so identity alone cannot see it;
     the marker's ctime does, since renaming the directory itself changes it
     (as does adding, removing or renaming an entry in it), while listing a
@@ -73,10 +75,11 @@ This file starts at 0.6.0. For earlier versions see the
     gone counts as a change. An unscanned marker or a lossy ledger fails open
     (the children are re-recorded and the directory reports changed). A ctime
     younger than one second, in the future, or 0 is treated as unknown. Costs:
-    the unchanged path is a single `lstat`; a re-check of a flat directory of
-    2 KB files took 3-5 ms at 10 files, 13-35 ms at 100 and 142-176 ms at 1000
-    (Windows); an external add or remove of a child costs about two re-checks
-    of that directory, and on a lossy ledger each ctime change can cost up to
+    the unchanged path is a single `lstat`; a re-check costs time
+    proportional to the files beneath the directory (tens of milliseconds at
+    100 files and a few hundred at 1000 on the Windows machine measured; see
+    ADR-0008); an add or remove of a child, external or a self-write, costs
+    about two re-checks of that directory, and on a lossy ledger each ctime change can cost up to
     two extra bumps. A self-write that creates a file with `expect()` alone,
     without a `suppress()` window, can bump once when its directory's event is
     handled before the file's event (an extra bump, never a missed change).

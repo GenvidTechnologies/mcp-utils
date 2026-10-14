@@ -199,7 +199,11 @@ for the outside edit. Through a real `OptimisticWatcher` on Windows that
 round trip with an edit, an add or a remove moved `txId` by 0. A follow-on
 case (an empty directory, a round trip that adds a file, then a later move-out)
 moved it by 0 and then 0, while the control that handles the move-out first
-moved it by 2. [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29)
+moved it by 2. The guarantee is about file content: a file edited, added or
+removed during the round trip is reported; an empty subdirectory added or
+removed is not, matching the rule that structure alone does not bump (a probe
+that mkdir'd an empty subdirectory or rmdir'd one during the round trip
+returned false). [#29](https://github.com/GenvidTechnologies/mcp-utils/issues/29)
 tracked it.
 
 **A directory marker also stores the directory's ctime (`stamp`).** On a path
@@ -237,11 +241,13 @@ by 0.
   rename-out-and-back round trips (Linux ext4 and tmpfs: 0 of 20,000), and a
   fresh directory's ctime was up to about 2.2 ms ahead of `Date.now()`. That is
   why a stamp is trusted only when it is at least a second old.
-- **The cost.** The hot path (trusted stamp) is about 0.1 ms at any size.
-  A re-check of a flat directory of 2 KB files takes 3-5 ms at 10 files,
-  13-35 ms at 100 and 142-176 ms at 1000. An external add or remove of a child
-  costs about two re-checks of that directory: one while the new ctime is still
-  racy, one to settle it. On a lossy ledger each ctime change can cost up to
+- **The cost.** The hot path (trusted stamp) is about 0.1 ms at any size. A
+  re-check takes time proportional to the files beneath the directory (figures
+  in the re-check table under Measurements). An add or remove of a child,
+  external or by the consumer's own write tool, costs about two re-checks of
+  that directory: any such change moves the ctime, so the next directory event
+  (for example a read-only listing) re-checks while the ctime is still racy,
+  and once more after it leaves the one-second window. On a lossy ledger each ctime change can cost up to
   two extra bumps. These are per-event figures; the start-up walk figures under
   Measurements are a different cost.
 - **An accepted extra bump.** A self-write that creates a file with `expect()`
@@ -289,6 +295,15 @@ the "after" figures were re-measured with the shipped code.
 | move a non-empty directory in | 2-3 | 1 |
 | move a non-empty directory out | 1 | 1 |
 | create a junction in the tree | 4 | 1 |
+
+Re-check and hot-path cost, per event, on Windows 11 / NTFS, a flat directory
+of 2 KB files. The figures varied 2-3x between sessions on the same machine, so
+read them as orders of magnitude.
+
+| Set | Conditions | Hot path | Re-check @10 / @100 / @1000 files | `record` re-check @10 / @100 / @1000 |
+|---|---|---|---|---|
+| Design phase | prototype, median of 7, `maxEntries` 5000 | about 0.05-0.1 ms | 3-5 / 13-35 / 142-176 ms | about 3 / 13-19 / 146-168 ms |
+| Shipped code at 826b943, 2026-10-14 | same probe pointed at `src/observedState.ts`, two runs; the prototype re-run in the same session gave matching figures, so the difference from the design-phase set is session variance, not a regression | 0.10-0.15 ms at every size | while the ctime is still racy 13-14 / 44-53 / 309-401 ms; after the window 11-17 / 45-53 / 368-466 ms | 8-11 / 40-46 / 297-395 ms |
 
 Directory identity, measured on the same machine (Windows 11, NTFS) with a
 throwaway probe: a directory's inode stays the same across listing it, reading
@@ -388,9 +403,9 @@ only how a same-identity directory is checked).
   watchers is a separate matter, handled by `prime` skipping subtrees already
   primed (see above).
 - **A directory moved out and back is now reported, at a re-check's cost.** A
-  changed ctime re-checks the directory's whole subtree, so an external add or
-  remove of a child in a large directory costs about two re-checks of it (see
-  Option A for the figures), and on a lossy ledger each ctime change can cost
+  changed ctime re-checks the directory's whole subtree, so an add or
+  remove of a child (external or a self-write) in a large directory costs about two re-checks of it (see
+  the re-check table under Measurements for the figures), and on a lossy ledger each ctime change can cost
   up to two extra bumps. The hot path (listing, reading, an unchanged
   directory) stays at a single `lstat`.
 - **A self-write with `expect()` alone can bump once** when its directory's
@@ -400,7 +415,11 @@ only how a same-identity directory is checked).
   one-second window between storing a stamp and a round trip could make the
   stored stamp look trustworthy when it is not.
 - **Residual: macOS/APFS.** Whether renaming a directory out and back changes
-  its ctime there was not measured.
+  its ctime there was not measured. NTFS and ext4 (WSL) were.
+- **Residual: FAT/exFAT.** Some of their timestamps are stored at 2-second
+  granularity, wider than the one-second racy window, so a round trip there
+  could in principle reproduce a stored stamp. Not measured (no such volume was
+  available); reasoning only.
 - **Residual: link markers** keep identity-only matching and are not
   re-checked.
 - **Known limit: identity is only as good as the filesystem's inode reuse.** A

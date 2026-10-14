@@ -16,10 +16,10 @@ import { ObservedState } from "../src/observedState.js";
 // rule). Events are the paths a recursive fs.watch reports: the touched path
 // and its parent, except for the "roundtrip" operation: a directory renamed
 // out, edited outside the tree and renamed back to its original path, which
-// delivers events on the directory itself only. The fuzz runs in milliseconds,
-// so every directory ctime it sees is inside the racy window: it exercises the
-// re-check path, never the trusted-stamp comparison, which is pinned by
-// separately aged tests.
+// delivers events on the directory itself only. The fuzz normally runs in
+// milliseconds, so the ctimes it sees are almost always inside the racy window:
+// it exercises the re-check path, not the trusted-stamp comparison, which the
+// separately aged tests pin.
 //
 // Deterministic: a fixed xorshift seed per run, so a failure names a seed that
 // reproduces it.
