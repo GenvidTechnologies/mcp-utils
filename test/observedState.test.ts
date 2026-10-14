@@ -638,6 +638,185 @@ describe("ObservedState", () => {
     });
   });
 
+  describe("directory round trips (ctime re-check)", () => {
+    let base: string;
+    const R = (n: string) => path.join(base, n, "root");
+    const OUT = (n: string) => path.join(base, n, "out");
+    const D = (n: string) => path.join(R(n), "D");
+
+    // Moves `dir` out of the primed root, runs `edit` on the moved copy, and moves it back, all synchronously.
+    function roundTrip(n: string, dir: string, edit: (moved: string) => void): void {
+      const moved = path.join(OUT(n), path.basename(dir));
+      fs.renameSync(dir, moved);
+      edit(moved);
+      fs.renameSync(moved, dir);
+    }
+
+    before(async function () {
+      this.timeout(10000);
+      base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "obs-rt-"));
+      const layouts: Record<string, (root: string) => void> = {
+        o54: (r) => fs.mkdirSync(path.join(r, "D")),
+        o55: (r) => fs.mkdirSync(path.join(r, "D")),
+        o56: (r) => fs.mkdirSync(path.join(r, "D")),
+        o57: (r) => fs.mkdirSync(path.join(r, "D")),
+        o58: (r) => fs.mkdirSync(path.join(r, "P", "D"), { recursive: true }),
+        o59: (r) => fs.mkdirSync(path.join(r, "D")),
+        o60: (r) => fs.mkdirSync(path.join(r, "D")),
+        o61: (r) => fs.mkdirSync(path.join(r, "D")),
+        o63: (r) => fs.mkdirSync(path.join(r, "D")),
+      };
+      for (const [n, make] of Object.entries(layouts)) {
+        fs.mkdirSync(R(n), { recursive: true });
+        fs.mkdirSync(OUT(n), { recursive: true });
+        make(R(n));
+      }
+      fs.writeFileSync(path.join(D("o54"), "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o55"), "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o56"), "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o56"), "b.txt"), "B");
+      fs.writeFileSync(path.join(R("o58"), "P", "D", "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o59"), "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o60"), "a.txt"), "A");
+      fs.writeFileSync(path.join(D("o61"), "a.txt"), "A");
+      fs.writeFileSync(path.join(R("o61"), "s.txt"), "S");
+      fs.writeFileSync(path.join(D("o63"), "a.txt"), "A");
+      // Age every directory's ctime past the 1000 ms racy window (once, for the whole block).
+      await new Promise((resolve) => setTimeout(resolve, 1400));
+    });
+
+    after(() => {
+      fs.rmSync(base, { recursive: true, force: true });
+    });
+
+    it("O54: a primed directory moved out, edited and moved back reports changed, then unchanged", () => {
+      const state = new ObservedState();
+      state.prime([R("o54")]);
+      roundTrip("o54", D("o54"), (m) => fs.writeFileSync(path.join(m, "a.txt"), "B"));
+      expect(state.isChanged(D("o54"))).to.be.true;
+      expect(state.isChanged(D("o54"))).to.be.false;
+    });
+
+    it("O55: a round trip that adds a file reports changed, and the added file is then accounted for", () => {
+      const state = new ObservedState();
+      state.prime([R("o55")]);
+      roundTrip("o55", D("o55"), (m) => fs.writeFileSync(path.join(m, "n.txt"), "N"));
+      expect(state.isChanged(D("o55"))).to.be.true;
+      expect(state.isChanged(path.join(D("o55"), "n.txt"))).to.be.false;
+    });
+
+    it("O56: a round trip that removes a file reports changed", () => {
+      const state = new ObservedState();
+      state.prime([R("o56")]);
+      roundTrip("o56", D("o56"), (m) => fs.rmSync(path.join(m, "b.txt")));
+      expect(state.isChanged(D("o56"))).to.be.true;
+    });
+
+    it("O57: a file added by a round trip to an empty directory is recorded, so moving it out reports changed", () => {
+      const state = new ObservedState();
+      state.prime([R("o57")]);
+      roundTrip("o57", D("o57"), (m) => fs.writeFileSync(path.join(m, "n.txt"), "N"));
+      expect(state.isChanged(D("o57"))).to.be.true;
+      fs.renameSync(D("o57"), path.join(OUT("o57"), "D"));
+      expect(state.isChanged(D("o57"))).to.be.true;
+    });
+
+    it("O58: a round trip of an ancestor with an edit two levels down reports the ancestor changed", () => {
+      const P = path.join(R("o58"), "P");
+      const state = new ObservedState();
+      state.prime([R("o58")]);
+      roundTrip("o58", P, (m) => fs.writeFileSync(path.join(m, "D", "a.txt"), "B"));
+      expect(state.isChanged(P)).to.be.true;
+    });
+
+    it("O59: a round trip with no change reports unchanged", () => {
+      const state = new ObservedState();
+      state.prime([R("o59")]);
+      roundTrip("o59", D("o59"), () => undefined);
+      expect(state.isChanged(D("o59"))).to.be.false;
+    });
+
+    it("O60: record accounts for a round trip's children, so an in-place edit back is seen", () => {
+      const a = path.join(D("o60"), "a.txt");
+      const state = new ObservedState();
+      state.prime([R("o60")]);
+      roundTrip("o60", D("o60"), (m) => fs.writeFileSync(path.join(m, "a.txt"), "B"));
+      state.record(D("o60"));
+      fs.writeFileSync(a, "A"); // the original bytes: only a re-recorded child can tell this changed
+      expect(state.isChanged(a)).to.be.true;
+    });
+
+    it("O61: a lossy ledger fails open on a round trip even though the directory marker survived", () => {
+      const fingerprint: Fingerprinter = (p) => {
+        if (p.endsWith("s.txt")) throw new Error("boom");
+        return contentFingerprint(p);
+      };
+      const state = new ObservedState({ fingerprint });
+      expect(state.prime([R("o61")]).complete).to.be.false;
+      roundTrip("o61", D("o61"), (m) => fs.writeFileSync(path.join(m, "a.txt"), "B"));
+      expect(state.isChanged(D("o61"))).to.be.true;
+    });
+
+    it("O62: racyStamp is empty for a ctime that is recent, zero or in the future, and set for an old one", () => {
+      const racyStamp = (ObservedState as any).racyStamp as (c: bigint, now: bigint) => string;
+      const now = 1_700_000_000_000n * 1_000_000n;
+      const ms = 1_000_000n;
+      expect(racyStamp(now - 1n * ms, now)).to.equal("");
+      expect(racyStamp(now - 5000n * ms, now)).to.not.equal("");
+      expect(racyStamp(0n, now)).to.equal("");
+      expect(racyStamp(now + 5n * ms, now)).to.equal("");
+    });
+
+    it("O63: isChanged on an unchanged aged directory is a hot path that fingerprints nothing", () => {
+      let calls = 0;
+      const fingerprint: Fingerprinter = (p) => {
+        calls++;
+        return contentFingerprint(p);
+      };
+      const state = new ObservedState({ fingerprint });
+      state.prime([R("o63")]);
+      fs.readdirSync(D("o63"));
+      fs.readFileSync(path.join(D("o63"), "a.txt"));
+      calls = 0;
+      expect(state.isChanged(D("o63"))).to.be.false;
+      expect(state.isChanged(D("o63"))).to.be.false;
+      expect(calls).to.equal(0);
+    });
+
+    it("O64: a directory moved in and recorded has its children accounted for", () => {
+      const r = path.join(base, "o64", "root");
+      const staging = path.join(base, "o64", "staging");
+      const E = path.join(r, "D", "E");
+      fs.mkdirSync(path.join(r, "D"), { recursive: true });
+      fs.mkdirSync(staging, { recursive: true });
+      fs.writeFileSync(path.join(staging, "x.txt"), "X");
+      const state = new ObservedState();
+      state.prime([r]);
+      fs.renameSync(staging, E);
+      state.record(E);
+      expect(state.isChanged(path.join(E, "x.txt"))).to.be.false;
+      expect(state.isChanged(E)).to.be.false;
+    });
+
+    it("O65: a directory recorded while unreadable stays unscanned, so moving it out reports changed", function () {
+      if (process.platform === "win32" || process.getuid?.() === 0) this.skip();
+      const r = path.join(base, "o65", "root");
+      const dir = path.join(r, "D");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(path.join(base, "o65", "out"));
+      fs.writeFileSync(path.join(dir, "a.txt"), "A");
+      const state = new ObservedState(); // D is never primed: record(D) is the first the ledger hears of it
+      fs.chmodSync(dir, 0o000);
+      try {
+        state.record(dir);
+      } finally {
+        fs.chmodSync(dir, 0o755);
+      }
+      fs.renameSync(dir, path.join(base, "o65", "out", "D"));
+      expect(state.isChanged(dir)).to.be.true;
+    });
+  });
+
   describe("contentFingerprint", () => {
     let tmpDir: string;
 
