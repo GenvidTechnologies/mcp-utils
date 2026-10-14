@@ -458,7 +458,10 @@ decisions that remain true.
 
 It was amended in place again for [#33](https://github.com/GenvidTechnologies/mcp-utils/issues/33),
 after 0.11.0 shipped, to say that `prime` records a root that is a regular file
-as a file. That is a correction of the baseline's coverage, not a change of the
-decision: before, a file root was walked as a directory, marked the ledger
-lossy and returned `complete: false`. The decision outcome is unchanged, so no
-superseding record was written.
+as a file. The criterion differs from the first amendment's, because this rule
+did reach consumers. What was amended is the coverage of a case the record
+never weighed: a file root was walked as a directory, marked the ledger lossy
+and returned `complete: false`, which is a defect against the decision as
+written rather than a rule anyone chose. The decision itself is unchanged: classify
+directories, prime a baseline at start. Nothing in the world moved to replace
+it, so by `wiki/decisions/index.md`'s rule there is nothing to supersede.
