@@ -14,9 +14,12 @@ import { ObservedState } from "../src/observedState.js";
 // Ground truth is a snapshot of every file's content under the root (directory
 // structure alone is not content, matching the "empty directories don't bump"
 // rule). Events are the paths a recursive fs.watch reports: the touched path
-// and its parent. Excluded on purpose: the documented round-trip limit (#29),
-// a directory renamed out, edited outside the tree and renamed back before its
-// events are handled.
+// and its parent, except for the "roundtrip" operation: a directory renamed
+// out, edited outside the tree and renamed back to its original path, which
+// delivers events on the directory itself only. The fuzz runs in milliseconds,
+// so every directory ctime it sees is inside the racy window: it exercises the
+// re-check path, never the trusted-stamp comparison, which is pinned by
+// separately aged tests.
 //
 // Deterministic: a fixed xorshift seed per run, so a failure names a seed that
 // reproduces it.
@@ -141,7 +144,7 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
     const step = (): string[] => {
       const { files, dirs } = listTree(R);
       const rdirs = [R, ...dirs];
-      const kind = pick(["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "fileOut", "fileIn"]);
+      const kind = pick(["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "roundtrip", "fileOut", "fileIn"]);
       switch (kind) {
         case "mkdir": {
           const p = path.join(pick(rdirs), pick(NAMES) + pick(NAMES));
@@ -208,6 +211,35 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
           fs.writeFileSync(path.join(p, pick(NAMES) + ".txt"), pick(["x", "y", "z"]));
           log.push(`swap ${rel(p)}`);
           return events(p);
+        }
+        case "roundtrip": {
+          // Out, edit while outside, back to exactly the same path. Only the
+          // directory's own events arrive (nothing on the parent).
+          if (!dirs.length) return [];
+          const p = pick(dirs);
+          const tmp = path.join(O, "r" + uniq++);
+          fs.renameSync(p, tmp);
+          const inner = listTree(tmp);
+          const action = pick(["change", "add", "remove"]);
+          const content = "rt" + uniq++;
+          let what: string;
+          if (action === "change" && inner.files.length) {
+            const f = pick(inner.files);
+            fs.writeFileSync(f, content);
+            what = `change ${f.slice(tmp.length)}`;
+          } else if (action === "remove" && inner.files.length) {
+            const f = pick(inner.files);
+            fs.unlinkSync(f);
+            what = `remove ${f.slice(tmp.length)}`;
+          } else {
+            const into = pick([tmp, ...inner.dirs]);
+            const f = path.join(into, "n" + uniq++ + ".txt");
+            fs.writeFileSync(f, content);
+            what = `add ${f.slice(tmp.length)}`;
+          }
+          fs.renameSync(tmp, p);
+          log.push(`roundtrip ${rel(p)} (${what})`);
+          return [p];
         }
         case "fileOut": {
           if (!files.length) return [];
