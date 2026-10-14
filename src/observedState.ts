@@ -24,11 +24,16 @@ const DEFAULT_MAX_ENTRIES = 1000;
  * swapped in by rename is told apart from the one that was recorded, and a
  * `scanned` flag: true when every file beneath it is known to be in the ledger
  * (stored by `prime` or by a vouched scan), false when the marker was recorded
- * without its children.
+ * without its children. `stamp` is the directory's `ctimeNs` as a string, or ""
+ * when unknown (a link, a failed `lstat`, or a ctime inside the racy window);
+ * "" never matches.
  */
 type Entry =
   | { kind: "file"; fp: string }
-  | { kind: "dir"; link: boolean; id: string; scanned: boolean };
+  | { kind: "dir"; link: boolean; id: string; scanned: boolean; stamp: string };
+
+/** A ctime younger than this (1000 ms, in ns) is "racily clean": see `ObservedState.racyStamp`. */
+const RACY_WINDOW_NS = 1000n * 1_000_000n;
 
 type Kind = "dir" | "dirlink" | "file";
 
@@ -205,17 +210,29 @@ export class ObservedState {
   }
 
   /** Classify `p` without following a link first; any error fails open to "file". `id` is "" when unknown. */
-  private classify(p: string): { kind: Kind; id: string } {
+  private classify(p: string): { kind: Kind; id: string; stamp: string } {
     try {
       const st = lstatSync(p, { bigint: true, throwIfNoEntry: false });
-      if (!st) return { kind: "file", id: "" };
+      if (!st) return { kind: "file", id: "", stamp: "" };
       const id = st.ino === 0n ? "" : st.ino.toString();
-      if (st.isDirectory()) return { kind: "dir", id };
-      if (st.isSymbolicLink() && statSync(p).isDirectory()) return { kind: "dirlink", id };
-      return { kind: "file", id: "" };
+      if (st.isDirectory()) return { kind: "dir", id, stamp: ObservedState.racyStamp(st.ctimeNs) };
+      if (st.isSymbolicLink() && statSync(p).isDirectory()) return { kind: "dirlink", id, stamp: "" };
+      return { kind: "file", id: "", stamp: "" };
     } catch {
-      return { kind: "file", id: "" };
+      return { kind: "file", id: "", stamp: "" };
     }
+  }
+
+  /**
+   * Encodes a directory's change time (`ctimeNs`) as a stamp, or "" (unknown,
+   * never matches) when it cannot be trusted. Like git's "racily clean" entries:
+   * a ctime younger than `RACY_WINDOW_NS` (or in the future, or 0) can be
+   * reproduced by a later rename within the clock's granularity, so it is
+   * treated as unknown. `now` is in nanoseconds and is a parameter for tests.
+   */
+  private static racyStamp(ctimeNs: bigint, now: bigint = BigInt(Date.now()) * 1_000_000n): string {
+    if (ctimeNs === 0n || ctimeNs + RACY_WINDOW_NS > now) return "";
+    return ctimeNs.toString();
   }
 
   /**
@@ -273,7 +290,7 @@ export class ObservedState {
       const full = path.join(dir, name);
       const key = ObservedState.normalize(full);
       try {
-        const { kind, id } = this.classify(full);
+        const { kind, id, stamp } = this.classify(full);
         const prev = this.entries.get(key);
         const link = kind === "dirlink";
         if (kind === "file") {
@@ -286,7 +303,7 @@ export class ObservedState {
           // Same kind and identity: fill gaps beneath it. Anything else conflicts: leave it entirely.
           if (prev.kind !== "dir" || prev.id !== id || prev.link !== link) continue;
         } else {
-          this.touch(key, { kind: "dir", link, id, scanned: true });
+          this.touch(key, { kind: "dir", link, id, scanned: true, stamp });
           summary.directories++;
         }
         if (kind === "dir" && !earlier.has(key)) {
@@ -313,7 +330,7 @@ export class ObservedState {
    */
   record(filePath: string): void {
     const key = ObservedState.normalize(filePath);
-    const { kind, id } = this.classify(filePath);
+    const { kind, id, stamp } = this.classify(filePath);
     const prev = this.entries.get(key);
     if (kind === "file") {
       // Same orphan rule as isChanged: a directory that became a file or went
@@ -336,7 +353,7 @@ export class ObservedState {
         scanned = false;
       }
     }
-    this.touch(key, { kind: "dir", link, id, scanned });
+    this.touch(key, { kind: "dir", link, id, scanned, stamp });
   }
 
   /**
@@ -347,7 +364,7 @@ export class ObservedState {
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
     const prev = this.entries.get(key);
-    const { kind, id } = this.classify(filePath);
+    const { kind, id, stamp } = this.classify(filePath);
 
     if (kind !== "file") {
       const link = kind === "dirlink";
@@ -356,7 +373,7 @@ export class ObservedState {
         return false; // the same directory (identity unchanged)
       }
       if (prev?.kind === "file" && prev.fp !== "absent") {
-        this.touch(key, { kind: "dir", link, id, scanned: false });
+        this.touch(key, { kind: "dir", link, id, scanned: false, stamp });
         return true; // live file replaced by a directory
       }
       // A different directory (or a link flip) replaces the recorded one:
@@ -389,7 +406,7 @@ export class ObservedState {
           }
         }
       }
-      this.touch(key, { kind: "dir", link, id, scanned });
+      this.touch(key, { kind: "dir", link, id, scanned, stamp });
       return changed || droppedLive || linkFlip;
     }
 
