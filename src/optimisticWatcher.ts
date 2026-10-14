@@ -11,9 +11,11 @@ export interface WatchHandle {
 }
 
 /**
- * A factory function that begins watching a directory and returns a handle.
+ * A factory function that begins watching a directory (or a single file) and
+ * returns a handle.
  *
- * @param dir     - Absolute path of the directory to watch.
+ * @param dir     - Absolute path of the directory to watch. For a single-file
+ *                  watch root, events are reported as the file's own path.
  * @param onEvent - Callback invoked with a normalized absolute POSIX path
  *                  whenever the watcher detects a change.
  * @returns A WatchHandle whose `close()` method stops watching.
@@ -41,7 +43,9 @@ export interface OptimisticWatcherOptions {
   /**
    * Override the default `fs.watch`-based watcher. Useful in tests.
    * The factory must call `onEvent` with a normalized absolute POSIX path.
-   * Defaults to a thin wrapper around `fs.watch({ recursive: true })`.
+   * Defaults to a thin wrapper around `fs.watch({ recursive: true })`. When a
+   * watch root is a single regular file, the default watches that file and
+   * maps every event to the file's own path.
    */
   watcherFactory?: WatcherFactory;
   /** Optional logger for diagnostic messages. */
@@ -184,6 +188,21 @@ export class OptimisticWatcher {
     this.watcherFactory =
       options.watcherFactory ??
       ((dir, onEvent) => {
+        let isFile = false;
+        try {
+          isFile = fs.statSync(dir).isFile();
+        } catch {
+          // Missing or unreadable: treat as a directory (the prior behaviour).
+        }
+        if (isFile) {
+          // fs.watch reports only the basename for a file watch, so joining it
+          // onto `dir` would yield a path that never exists. Every event maps
+          // to the file's own path.
+          const fw = fs.watch(dir, { recursive: false }, () => {
+            onEvent(toPosixPath(path.resolve(dir)));
+          });
+          return { close: () => fw.close() };
+        }
         const w = fs.watch(dir, { recursive: true }, (_event, filename) => {
           if (filename == null) return;
           // Resolve (not just join) so the fired path is canonical absolute
