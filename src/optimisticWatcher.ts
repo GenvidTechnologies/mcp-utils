@@ -45,7 +45,8 @@ export interface OptimisticWatcherOptions {
    * The factory must call `onEvent` with a normalized absolute POSIX path.
    * Defaults to a thin wrapper around `fs.watch({ recursive: true })`. When a
    * watch root is a single regular file, the default watches that file and
-   * maps every event to the file's own path.
+   * maps every event to the file's own path; a link to a file is watched at
+   * its target and reported at the link's path.
    */
   watcherFactory?: WatcherFactory;
   /** Optional logger for diagnostic messages. */
@@ -126,7 +127,8 @@ export interface OptimisticWatcherOptions {
  * responsibility.
  *
  * The first `start()` synchronously walks and hashes the watched trees once
- * to seed the ledger (a baseline), after the watch handles are created. So a
+ * to seed the ledger (a baseline), after the watch handles are created. A
+ * watch root that is a single file (or a link to one) is hashed as a file. So a
  * first read-only event on a pre-existing file no longer bumps, and, given a
  * complete baseline on a filesystem with inodes, directory events don't bump
  * (otherwise they are re-evaluated and may bump, failing open). A restart
@@ -188,17 +190,19 @@ export class OptimisticWatcher {
     this.watcherFactory =
       options.watcherFactory ??
       ((dir, onEvent) => {
-        let isFile = false;
+        let fileTarget: string | null = null;
         try {
-          isFile = fs.statSync(dir).isFile();
+          // A link to a file is watched at its target, which is where edits
+          // land; a watch on the link itself sees none of them.
+          if (fs.statSync(dir).isFile()) fileTarget = fs.realpathSync(dir);
         } catch {
           // Missing or unreadable: treat as a directory (the prior behaviour).
         }
-        if (isFile) {
+        if (fileTarget !== null) {
           // fs.watch reports only the basename for a file watch, so joining it
           // onto `dir` would yield a path that never exists. Every event maps
-          // to the file's own path.
-          const fw = fs.watch(dir, { recursive: false }, () => {
+          // to the watch root's own path (the link's, for a link).
+          const fw = fs.watch(fileTarget, { recursive: false }, () => {
             onEvent(toPosixPath(path.resolve(dir)));
           });
           return { close: () => fw.close() };

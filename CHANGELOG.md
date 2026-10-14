@@ -30,7 +30,9 @@ This file starts at 0.6.0. For earlier versions see the
   first as unchanged (a missed change; observed: three distinct edits produced
   one report). The factory now checks the root when it is created and watches
   a regular file non-recursively, mapping every event to the file's own
-  normalized path. Directory roots are unchanged.
+  normalized path. A root that is a link to a file is watched at its target,
+  where edits land, and reported at the link's path; before, such a root
+  reported no edits at all. Directory roots are unchanged.
 
 Both fixes change observable output, so this ships as a **minor** release
 (0.12.0). Below 1.0.0 a caret range excludes minor bumps, so a `^0.11.0`
