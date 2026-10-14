@@ -23,12 +23,17 @@ const DEFAULT_MAX_ENTRIES = 1000;
  * as a decimal string; "" when unknown, which never matches) so a directory
  * swapped in by rename is told apart from the one that was recorded, and a
  * `scanned` flag: true when every file beneath it is known to be in the ledger
- * (stored by `prime` or by a vouched scan), false when the marker was recorded
- * without its children.
+ * (stored by `prime` or by a walk that recorded the children), false only when
+ * the walk of its children failed. `stamp` is the directory's `ctimeNs` as a
+ * string, or "" when unknown (a link, a failed `lstat`, a failed walk, or a
+ * ctime inside the racy window); "" never matches.
  */
 type Entry =
   | { kind: "file"; fp: string }
-  | { kind: "dir"; link: boolean; id: string; scanned: boolean };
+  | { kind: "dir"; link: boolean; id: string; scanned: boolean; stamp: string };
+
+/** A ctime younger than this (1000 ms, in ns) is "racily clean": see `ObservedState.racyStamp`. */
+const RACY_WINDOW_NS = 1000n * 1_000_000n;
 
 type Kind = "dir" | "dirlink" | "file";
 
@@ -92,18 +97,32 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * path is classified as a file and the fingerprinter fails open).
  * `isChanged` on a path that is now a directory:
  * a marker with the same identity (`lstat` inode; unknown identity never
- * matches) is unchanged, while a different directory swapped in at the path or
- * a dir/link flip replaces it: the old subtree is dropped (changed if a live
- * file was) and the new one is evaluated like a never-seen directory. A marker
- * is `scanned` when its children are known to be recorded (`prime`, a vouched
- * scan, or an empty directory at `record` time); a directory that later
- * vanishes or becomes a file while unscanned is changed, since dropping no
- * live entries proves nothing. Descendants are found through a parent→children
+ * matches) is decided by its change time. The marker stores the directory's
+ * ctime: renaming the directory itself changes it (as does adding, removing
+ * or renaming an entry in it), so a directory renamed out, edited and renamed
+ * back is seen, which an inode alone cannot do. When the stored ctime equals the current one (and is not "racy", see
+ * below) the directory is unchanged and nothing is walked or fingerprinted.
+ * Otherwise a `scanned` marker on a non-lossy ledger is re-checked: every file
+ * beneath it, at any depth, is evaluated, a recorded file that is gone counts
+ * as a change, and the ctime read before the walk is stored. An unscanned
+ * marker or a lossy ledger fails open: the children are re-recorded silently
+ * and the directory reports changed. A ctime younger than one second (or in
+ * the future, or 0) is "racily clean", as in a git index: a later rename within
+ * the clock's granularity can reproduce it, so it is stored as unknown and the
+ * next event takes the re-check. A link marker is unchanged on identity alone.
+ * A different directory swapped in at the path or a dir/link flip replaces the
+ * marker: the old subtree is dropped (changed if a live file was) and the new
+ * one is evaluated like a never-seen directory. A marker is `scanned` when its
+ * children are known to be recorded (`prime`, or any walk of them that
+ * succeeded, `record` included) and unscanned only after a failed walk; a
+ * directory that later vanishes or becomes a file while unscanned is changed,
+ * since dropping no live entries proves nothing. Descendants are found through a parent→children
  * index, so a drop costs the subtree, not the ledger. A live file
  * replaced by a directory is changed; a never-seen directory is changed
  * unless it lies under a `prime`d root, the ledger is not lossy and it is
  * not a link, in which case every file beneath it is evaluated and the
- * directory is changed only if one of them is. On a path that is now a file
+ * directory is changed only if one of them is; otherwise its children are
+ * recorded silently and it is changed. On a path that is now a file
  * or missing, all entries beneath it are dropped, whatever its own stored
  * entry is (a file has no children, so they can only be orphans), so a
  * directory later moved back in is re-evaluated rather than matched against
@@ -205,17 +224,29 @@ export class ObservedState {
   }
 
   /** Classify `p` without following a link first; any error fails open to "file". `id` is "" when unknown. */
-  private classify(p: string): { kind: Kind; id: string } {
+  private classify(p: string): { kind: Kind; id: string; stamp: string } {
     try {
       const st = lstatSync(p, { bigint: true, throwIfNoEntry: false });
-      if (!st) return { kind: "file", id: "" };
+      if (!st) return { kind: "file", id: "", stamp: "" };
       const id = st.ino === 0n ? "" : st.ino.toString();
-      if (st.isDirectory()) return { kind: "dir", id };
-      if (st.isSymbolicLink() && statSync(p).isDirectory()) return { kind: "dirlink", id };
-      return { kind: "file", id: "" };
+      if (st.isDirectory()) return { kind: "dir", id, stamp: ObservedState.racyStamp(st.ctimeNs) };
+      if (st.isSymbolicLink() && statSync(p).isDirectory()) return { kind: "dirlink", id, stamp: "" };
+      return { kind: "file", id: "", stamp: "" };
     } catch {
-      return { kind: "file", id: "" };
+      return { kind: "file", id: "", stamp: "" };
     }
+  }
+
+  /**
+   * Encodes a directory's change time (`ctimeNs`) as a stamp, or "" (unknown,
+   * never matches) when it cannot be trusted. Like git's "racily clean" entries:
+   * a ctime younger than `RACY_WINDOW_NS` (or in the future, or 0) can be
+   * reproduced by a later rename within the clock's granularity, so it is
+   * treated as unknown. `now` is in nanoseconds and is a parameter for tests.
+   */
+  private static racyStamp(ctimeNs: bigint, now: bigint = BigInt(Date.now()) * 1_000_000n): string {
+    if (ctimeNs === 0n || ctimeNs + RACY_WINDOW_NS > now) return "";
+    return ctimeNs.toString();
   }
 
   /**
@@ -273,7 +304,7 @@ export class ObservedState {
       const full = path.join(dir, name);
       const key = ObservedState.normalize(full);
       try {
-        const { kind, id } = this.classify(full);
+        const { kind, id, stamp } = this.classify(full);
         const prev = this.entries.get(key);
         const link = kind === "dirlink";
         if (kind === "file") {
@@ -286,14 +317,17 @@ export class ObservedState {
           // Same kind and identity: fill gaps beneath it. Anything else conflicts: leave it entirely.
           if (prev.kind !== "dir" || prev.id !== id || prev.link !== link) continue;
         } else {
-          this.touch(key, { kind: "dir", link, id, scanned: true });
+          this.touch(key, { kind: "dir", link, id, scanned: true, stamp });
           summary.directories++;
         }
         if (kind === "dir" && !earlier.has(key)) {
           if (!this.walk(full, summary, earlier) && prev === undefined) {
             // The children were never recorded, so the marker we just added must not claim they were.
             const added = this.entries.get(key);
-            if (added?.kind === "dir") added.scanned = false;
+            if (added?.kind === "dir") {
+              added.scanned = false;
+              added.stamp = ""; // an unscanned marker must not be vouched for by its ctime
+            }
           }
         }
       } catch {
@@ -307,13 +341,16 @@ export class ObservedState {
    * Record `filePath` now, unconditionally — "this state is accounted for".
    * A directory (or link to one) is stored as a marker; the fingerprinter is
    * only called for files. A directory already recorded with the same identity
-   * keeps its marker (and `scanned` flag); a different one replaces it and
-   * drops the old subtree. A newly recorded directory is `scanned` only when it
-   * is empty — its children are not recorded by this call.
+   * and an unchanged (non-racy) ctime keeps its marker. If its ctime moved, its
+   * children are re-recorded silently (a recorded file that is gone is dropped)
+   * and the new ctime is stored, so a later event does not report what this
+   * call accounted for. A different directory replaces the marker and drops the
+   * old subtree. Whenever a directory is recorded its children are recorded
+   * with it; the marker is `scanned` unless that walk failed.
    */
   record(filePath: string): void {
     const key = ObservedState.normalize(filePath);
-    const { kind, id } = this.classify(filePath);
+    const { kind, id, stamp } = this.classify(filePath);
     const prev = this.entries.get(key);
     if (kind === "file") {
       // Same orphan rule as isChanged: a directory that became a file or went
@@ -324,19 +361,39 @@ export class ObservedState {
     }
     const link = kind === "dirlink";
     if (prev?.kind === "dir" && id !== "" && prev.id === id && prev.link === link) {
-      this.touch(key, prev);
+      if (link || (stamp !== "" && prev.stamp === stamp)) {
+        this.touch(key, prev);
+        return;
+      }
+      // The directory changed under the same identity: account for its children.
+      this.rewalkSilently(key, filePath, id, stamp);
       return;
     }
     if (prev?.kind === "dir") this.dropBeneath(key);
-    let scanned = true;
-    if (!link) {
-      try {
-        scanned = readdirSync(filePath).length === 0;
-      } catch {
-        scanned = false;
-      }
-    }
-    this.touch(key, { kind: "dir", link, id, scanned });
+    this.touch(key, this.newDirMarker(key, filePath, link, id, stamp));
+  }
+
+  /**
+   * Marker for a directory with no usable marker of its own: records its
+   * children silently (a recorded file the walk did not find is stale and
+   * dropped) and sets `scanned` from the walk's success. A link has no children
+   * to record. A failed walk stores no stamp, so the hot path cannot vouch for
+   * children that were never recorded.
+   */
+  private newDirMarker(key: string, dirPath: string, link: boolean, id: string, stamp: string): Entry {
+    if (link) return { kind: "dir", link, id, scanned: true, stamp };
+    const res = this.recordChildren(key, dirPath, false, true);
+    return { kind: "dir", link, id, scanned: res.ok, stamp: res.ok ? stamp : "" };
+  }
+
+  /**
+   * Silently re-records the children of a same-identity directory and stores
+   * `stamp` (read before the walk, so an edit during the walk is seen next
+   * time). `scanned` follows the walk's success; a failed walk stores no stamp.
+   */
+  private rewalkSilently(key: string, dirPath: string, id: string, stamp: string): void {
+    const res = this.recordChildren(key, dirPath, false, true);
+    this.touch(key, { kind: "dir", link: false, id, scanned: res.ok, stamp: res.ok ? stamp : "" });
   }
 
   /**
@@ -347,16 +404,31 @@ export class ObservedState {
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
     const prev = this.entries.get(key);
-    const { kind, id } = this.classify(filePath);
+    const { kind, id, stamp } = this.classify(filePath);
 
     if (kind !== "file") {
       const link = kind === "dirlink";
       if (prev?.kind === "dir" && id !== "" && prev.id === id && prev.link === link) {
-        this.touch(key, prev);
-        return false; // the same directory (identity unchanged)
+        // Same identity. A link, or a non-racy ctime equal to the stored one, is
+        // unchanged without walking or fingerprinting anything.
+        if (link || (stamp !== "" && prev.stamp === stamp)) {
+          this.touch(key, prev);
+          return false;
+        }
+        // The ctime moved (or is unknown): look beneath it.
+        if (prev.scanned && !this.lossy) {
+          // Re-check the whole subtree. A recorded file that is gone is a
+          // change even though a marker exists.
+          const res = this.recordChildren(key, filePath, true, true);
+          this.touch(key, { kind: "dir", link, id, scanned: res.ok, stamp: res.ok ? stamp : "" });
+          return res.changed;
+        }
+        // Unscanned marker or lossy ledger: fail open, and re-record the children.
+        this.rewalkSilently(key, filePath, id, stamp);
+        return true;
       }
       if (prev?.kind === "file" && prev.fp !== "absent") {
-        this.touch(key, { kind: "dir", link, id, scanned: false });
+        this.touch(key, this.newDirMarker(key, filePath, link, id, stamp));
         return true; // live file replaced by a directory
       }
       // A different directory (or a link flip) replaces the recorded one:
@@ -366,31 +438,18 @@ export class ObservedState {
       const linkFlip = prev?.kind === "dir" && prev.link !== link;
       // Scan only if the ledger can vouch for it.
       const vouched = !link && !this.lossy && this.isUnderPrimedRoot(filePath);
-      let changed = true;
-      let scanned = link;
-      if (vouched) {
-        let files: string[] | undefined;
-        try {
-          files = walkFiles(filePath, () => true);
-        } catch {
-          files = undefined;
-        }
-        if (files !== undefined) {
-          changed = false;
-          scanned = true;
-          // Evaluate every file (no short-circuit) so each one is recorded.
-          for (const f of files) if (this.isChanged(f)) changed = true;
-          // With no marker to compare (never seen, or evicted while its
-          // children survived), a recorded file the scan did not find was
-          // removed: that is a change, and its entry is stale.
-          if (prev?.kind !== "dir") {
-            const found = new Set(files.map((f) => ObservedState.normalize(f)));
-            if (this.dropUnfound(key, found)) changed = true;
-          }
-        }
+      if (!vouched) {
+        // Still a change, but record the children so the marker does not
+        // claim less than we know (a link has none).
+        this.touch(key, this.newDirMarker(key, filePath, link, id, stamp));
+        return true;
       }
-      this.touch(key, { kind: "dir", link, id, scanned });
-      return changed || droppedLive || linkFlip;
+      // With no marker to compare (never seen, or evicted while its
+      // children survived), a recorded file the scan did not find was
+      // removed: that is a change, and its entry is stale.
+      const res = this.recordChildren(key, filePath, true, prev?.kind !== "dir");
+      this.touch(key, { kind: "dir", link, id, scanned: res.ok, stamp: res.ok ? stamp : "" });
+      return res.changed || droppedLive || linkFlip;
     }
 
     const next = this.fingerprint(filePath);
@@ -416,6 +475,45 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     this.remove(key);
     this.dropBeneath(key);
+  }
+
+  /**
+   * Walk the subtree at `dirPath` (`key` is its normalized form) with
+   * `walkFiles` and record every file found. Returns `{ ok, changed }`:
+   * `ok: false` means the walk threw, nothing was recorded, and the caller must
+   * not mark the directory `scanned` (`changed` is then `true`, the fail-open
+   * answer). Otherwise `changed` is meaningful only when `report` is true.
+   * - `report: true` runs `isChanged` on each found file (no short-circuit, so
+   *   each is recorded) and reports whether any differed, including a dropped
+   *   live entry when `dropStale` is set.
+   * - `report: false` is silent: each found file is `record`ed, `changed` is
+   *   `false`.
+   * `dropStale` removes recorded files beneath `key` the walk did not find via
+   * `dropUnfound`; the caller decides when that is valid.
+   */
+  private recordChildren(
+    key: string,
+    dirPath: string,
+    report: boolean,
+    dropStale: boolean,
+  ): { ok: boolean; changed: boolean } {
+    let files: string[];
+    try {
+      files = walkFiles(dirPath, () => true);
+    } catch {
+      return { ok: false, changed: true };
+    }
+    let changed = false;
+    for (const f of files) {
+      if (report) {
+        if (this.isChanged(f)) changed = true;
+      } else this.record(f);
+    }
+    if (dropStale) {
+      const found = new Set(files.map((f) => ObservedState.normalize(f)));
+      if (this.dropUnfound(key, found) && report) changed = true;
+    }
+    return { ok: true, changed };
   }
 
   /**

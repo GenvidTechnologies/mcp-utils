@@ -849,6 +849,89 @@ describe("OptimisticWatcher", () => {
         expect(lossy.filter((l) => /incomplete/i.test(l)).length).to.be.at.least(1);
       });
     });
+
+    describe("directory round trips (ctime re-check)", () => {
+      let base: string;
+      const R = (n: string) => path.join(base, n, "root");
+      const OUT = (n: string) => path.join(base, n, "out");
+      const fp = (p: string) => toPosixPath(path.resolve(p));
+      const make = (n: string) => {
+        const fake = makeFakeFactory();
+        const w = new OptimisticWatcher({
+          watchDirs: [R(n)],
+          expected: new ExpectedChanges(),
+          watcherFactory: fake.factory,
+        });
+        return { w, fire: (p: string) => fake.fireAll(fp(p)) };
+      };
+
+      before(async function () {
+        this.timeout(10000);
+        base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "ow-rt-"));
+        for (const n of ["w23", "w24", "w25"]) {
+          fs.mkdirSync(path.join(R(n), "D"), { recursive: true });
+          fs.mkdirSync(OUT(n), { recursive: true });
+        }
+        fs.writeFileSync(path.join(R("w23"), "D", "a.txt"), "A");
+        fs.writeFileSync(path.join(R("w25"), "D", "a.txt"), "A");
+        // Age every directory's ctime past the 1000 ms racy window (once, for the whole block).
+        await new Promise((resolve) => setTimeout(resolve, 1400));
+      });
+
+      after(() => {
+        fs.rmSync(base, { recursive: true, force: true });
+      });
+
+      it("W23: a synchronous round-trip edit of an aged directory bumps once", () => {
+        const D = path.join(R("w23"), "D");
+        const moved = path.join(OUT("w23"), "D");
+        const { w, fire } = make("w23");
+        w.start();
+        fs.renameSync(D, moved);
+        fs.writeFileSync(path.join(moved, "a.txt"), "B");
+        fs.renameSync(moved, D);
+        const before = w.txId;
+        fire(D);
+        expect(w.txId - before).to.equal(1);
+        fire(D);
+        expect(w.txId - before).to.equal(1);
+      });
+
+      it("W24: a file added by a round trip to an empty directory bumps, and so does moving it out", () => {
+        const D = path.join(R("w24"), "D");
+        const moved = path.join(OUT("w24"), "D");
+        const { w, fire } = make("w24");
+        w.start();
+        fs.renameSync(D, moved);
+        fs.writeFileSync(path.join(moved, "n.txt"), "N");
+        fs.renameSync(moved, D);
+        const before = w.txId;
+        fire(D);
+        expect(w.txId - before).to.equal(1);
+        fs.renameSync(D, moved);
+        fire(D);
+        expect(w.txId - before).to.equal(2);
+      });
+
+      it("W25: a populated directory installed by a self-write inside suppress stays quiet afterwards", async () => {
+        const D = path.join(R("w25"), "D");
+        const E = path.join(D, "E");
+        const staging = path.join(OUT("w25"), "staging");
+        fs.mkdirSync(staging);
+        fs.writeFileSync(path.join(staging, "x.txt"), "X");
+        const { w, fire } = make("w25");
+        w.start();
+        await w.suppress(async () => {
+          fs.renameSync(staging, E);
+          fire(E);
+          fire(D);
+        });
+        const before = w.txId;
+        fire(D);
+        fire(E);
+        expect(w.txId - before).to.equal(0);
+      });
+    });
   });
 
   // -------------------------------------------------------------------------
