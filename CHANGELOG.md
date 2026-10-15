@@ -11,6 +11,8 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-15
+
 ### Fixed
 
 - **`ObservedState.prime()` records a file root as a file.** A root that is a
@@ -402,7 +404,8 @@ it. See [#33](https://github.com/GenvidTechnologies/mcp-utils/issues/33).
   `EISDIR`. Broken symlinks and symlink cycles were emitted the same way.
   ([#10](https://github.com/GenvidTechnologies/mcp-utils/issues/10))
 
-[Unreleased]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/GenvidTechnologies/mcp-utils/compare/v0.8.0...v0.9.0
