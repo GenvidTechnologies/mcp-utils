@@ -18,6 +18,10 @@ sources:
     resource: https://github.com/GenvidTechnologies/mcp-utils/issues/29
     title: "#29 — a directory renamed out, edited and renamed back reads as unchanged"
     last_modified: 2026-10-14
+  - id: issue-33
+    resource: https://github.com/GenvidTechnologies/mcp-utils/issues/33
+    title: "#33 — a single-file watch root has no baseline and loses edits"
+    last_modified: 2026-10-14
 ---
 
 <!-- `stale_after` deliberately omitted — see the note in 0001. -->
@@ -131,7 +135,11 @@ or reports changed. "An evicted path reports changed again" is therefore true
 of files; for a directory it is the scan or a changed report.
 
 **`prime(roots)` builds a baseline.** It walks the roots, recording directories
-and links as markers and files as fingerprints. It fills gaps only, never throws, and does not descend into links. The
+and links as markers and files as fingerprints. A root that is itself a regular
+file, or a link to one, is fingerprinted and recorded as a file (counted in
+`files`, fill-gaps-only, ledger not marked lossy) instead of being walked; a
+missing, directory, directory-link or special-file root is handled as before.
+It fills gaps only, never throws, and does not descend into links. The
 ledger turns **lossy** when a directory cannot be read, a fingerprinter throws,
 or an eviction drops an entry holding a real fingerprint. Lossy never clears,
 and a lossy ledger stops vouching for never-seen directories. `PrimeSummary`
@@ -447,3 +455,13 @@ record is superseded when the world moves; here the record was still being
 settled, so a second record would have left a reader to reconcile a rule that
 never reached anyone. The `description` is unchanged, since it names the
 decisions that remain true.
+
+It was amended in place again for [#33](https://github.com/GenvidTechnologies/mcp-utils/issues/33),
+after 0.11.0 shipped, to say that `prime` records a root that is a regular file
+as a file. The criterion differs from the first amendment's, because this rule
+did reach consumers. What was amended is the coverage of a case the record
+never weighed: a file root was walked as a directory, marked the ledger lossy
+and returned `complete: false`, which is a defect against the decision as
+written rather than a rule anyone chose. The decision itself is unchanged: classify
+directories, prime a baseline at start. Nothing in the world moved to replace
+it, so by `wiki/decisions/index.md`'s rule there is nothing to supersede.

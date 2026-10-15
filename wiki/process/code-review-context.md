@@ -102,13 +102,26 @@ elevation and produce an identical dirent shape.
       this is the local instance of guardrail 7 (name the evidence, or report
       the gap).
 
-**The expected pending baseline is exactly one, and it is not a symlink test.**
-On Windows the suite reports `1 pending`: `test/resolveWithin.test.ts:49`, a
-POSIX-only case that legitimately skips on `win32` (its `win32` counterpart at
-`:65` runs instead). The `walkFiles` `EPERM` guards at `test/walkFiles.test.ts:26`
-and `:95` do **not** skip on an unprivileged Windows machine — junctions need no
-elevation — so they must show `✔`. A second pending entry means a filesystem
-test silently stopped running; find it rather than accepting the green.
+**The expected pending baseline on Windows is exactly two, and neither is a
+symlink test.** The suite reports `2 pending`, both skipped on `win32` by an
+explicit platform check:
+
+- `abs-inside` in `test/resolveWithin.test.ts` is a POSIX-only case. Its
+  `win32` counterpart runs instead.
+- O65 in `test/observedState.test.ts` needs `chmod 0o000` to make a directory
+  unreadable, which Windows cannot do. It also skips when running as root.
+
+The `walkFiles` `EPERM` guards at `test/walkFiles.test.ts:26` and `:95` do
+**not** skip on an unprivileged Windows machine — junctions need no elevation —
+so they must show `✔`. A third pending entry means a filesystem test silently
+stopped running; find it rather than accepting the green.
+
+**One exception: a symlink to a *file* has no junction form.** O68
+(`test/observedState.test.ts`) and W28 (`test/optimisticWatcher.test.ts`) use
+`fs.symlinkSync(..., "file")`. On a Windows machine without Developer Mode or
+elevation they skip on `EPERM`, and the baseline there is four. CI runs on
+Linux, where both must show `✔`. Confirm them there rather than accepting a
+local skip.
 
 ### Dependency weight
 

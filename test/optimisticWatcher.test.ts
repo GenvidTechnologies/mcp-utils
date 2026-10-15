@@ -848,6 +848,20 @@ describe("OptimisticWatcher", () => {
         expect(lossy.filter((l) => /baseline/i.test(l)).length).to.be.at.least(2);
         expect(lossy.filter((l) => /incomplete/i.test(l)).length).to.be.at.least(1);
       });
+
+      it("W26: a single-file watch root logs no incomplete baseline, and a read-only first event does not bump", () => {
+        const f = path.join(tmpDir, "c.json");
+        fs.writeFileSync(f, "{}");
+        const lines: string[] = [];
+        const { w, fire } = make(undefined, {
+          watchDirs: [f],
+          logger: (...a: unknown[]) => lines.push(a.join(" ")),
+        });
+        w.start();
+        expect(lines.filter((l) => /incomplete/i.test(l))).to.have.length(0);
+        fire(f);
+        expect(w.txId).to.equal(0);
+      });
     });
 
     describe("directory round trips (ctime re-check)", () => {
@@ -981,6 +995,72 @@ describe("OptimisticWatcher", () => {
       expect(externalCalls.length).to.equal(1);
       // The reported path should end with "test.txt" (using forward slashes)
       expect(externalCalls[0]).to.include("test.txt");
+    });
+
+    it("W27: the default factory reports each edit of a single-file watch root at the file's own path", async function () {
+      if (process.env.SKIP_FS_WATCH_TEST) this.skip();
+      this.timeout(10000);
+
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-test-"));
+      const file = path.join(tmpDir, "c.json");
+      fs.writeFileSync(file, "0");
+      const reported: string[] = [];
+
+      watcher = new OptimisticWatcher({
+        watchDirs: [file],
+        expected: new ExpectedChanges(),
+        onExternalChange: (p) => reported.push(p),
+      });
+      watcher.start();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      for (const content of ["edit one", "edit number two", "edit three!!"]) {
+        const seen = reported.length;
+        fs.writeFileSync(file, content);
+        const deadline = Date.now() + 2000;
+        while (reported.length === seen && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        expect(reported.length, `no report after writing "${content}"`).to.be.greaterThan(seen);
+      }
+
+      const expected = toPosixPath(path.resolve(file));
+      for (const p of reported) expect(p).to.equal(expected);
+    });
+
+    it("W28: the default factory reports an edit of a symlinked single-file watch root at the link's path", async function () {
+      if (process.env.SKIP_FS_WATCH_TEST) this.skip();
+      this.timeout(10000);
+
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ow-test-"));
+      const target = path.join(tmpDir, "target.json");
+      const link = path.join(tmpDir, "link.json");
+      fs.writeFileSync(target, "0");
+      try {
+        fs.symlinkSync(target, link, "file");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") this.skip();
+        throw err;
+      }
+      const reported: string[] = [];
+
+      watcher = new OptimisticWatcher({
+        watchDirs: [link],
+        expected: new ExpectedChanges(),
+        onExternalChange: (p) => reported.push(p),
+      });
+      watcher.start();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      fs.writeFileSync(target, "edited through the target");
+      const deadline = Date.now() + 2000;
+      while (reported.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(reported.length, "no report after editing the link's target").to.be.greaterThan(0);
+      const expected = toPosixPath(path.resolve(link));
+      for (const p of reported) expect(p).to.equal(expected);
     });
   });
 });

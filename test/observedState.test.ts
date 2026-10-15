@@ -912,6 +912,64 @@ describe("ObservedState.prime", () => {
     });
   });
 
+  it("O66: a root that is a regular file is recorded as a file, complete, and reads unchanged", () => {
+    const file = path.join(root, "a.txt");
+    fs.writeFileSync(file, "a");
+    const state = new ObservedState();
+    expect(state.prime([file])).to.deep.equal({ files: 1, directories: 0, complete: true });
+    expect(state.isChanged(file)).to.be.false;
+  });
+
+  it("O67: after priming a file root, an external edit reports changed", () => {
+    const file = path.join(root, "a.txt");
+    fs.writeFileSync(file, "before");
+    const state = new ObservedState();
+    state.prime([file]);
+    fs.writeFileSync(file, "after");
+    expect(state.isChanged(file)).to.be.true;
+  });
+
+  it("O68: a root that is a symbolic link to a regular file is recorded as a file", function () {
+    const target = path.join(root, "target.txt");
+    const link = path.join(root, "link.txt");
+    fs.writeFileSync(target, "t");
+    try {
+      fs.symlinkSync(target, link, "file");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EPERM" || code === "ENOSYS") this.skip();
+      throw err;
+    }
+    const state = new ObservedState();
+    expect(state.prime([link])).to.deep.equal({ files: 1, directories: 0, complete: true });
+  });
+
+  it("O69: a file root that already has an entry is not overwritten", () => {
+    const file = path.join(root, "a.txt");
+    fs.writeFileSync(file, "before");
+    const state = new ObservedState();
+    state.record(file);
+    fs.writeFileSync(file, "after");
+    expect(state.prime([file]).files).to.equal(0);
+    expect(state.isChanged(file)).to.be.true;
+  });
+
+  it("O70: a file root beneath a root from an earlier prime is skipped", () => {
+    makeTree();
+    const state = new ObservedState();
+    state.prime([root]);
+    // Created after the first prime, so it has no entry: only the skip can keep
+    // the second prime from recording it and hiding its creation.
+    const file = path.join(root, "new.txt");
+    fs.writeFileSync(file, "new");
+    expect(state.prime([file])).to.deep.equal({
+      files: 0,
+      directories: 0,
+      complete: true,
+    });
+    expect(state.isChanged(file)).to.be.true;
+  });
+
   it("prime with a throwing fingerprinter does not throw and is incomplete", () => {
     makeTree();
     const state = new ObservedState({
