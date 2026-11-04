@@ -984,3 +984,168 @@ describe("ObservedState.prime", () => {
     expect(summary?.complete).to.be.false;
   });
 });
+
+describe("ObservedState ignore predicate", () => {
+  let base: string;
+  const ignore = (p: string): boolean => p.endsWith(".uistate.json");
+  const keysOf = (state: ObservedState): string[] => [...((state as any).entries as Map<string, unknown>).keys()];
+
+  beforeEach(() => {
+    base = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "obs-ign-"));
+  });
+  afterEach(() => {
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  /** base/S/a.txt: a primed root holding one subfolder with one recorded file. */
+  function makeSubfolder(): string {
+    const sub = path.join(base, "S");
+    fs.mkdirSync(sub);
+    fs.writeFileSync(path.join(sub, "a.txt"), "A");
+    return sub;
+  }
+
+  /**
+   * base/a.txt, base/b.uistate.json, base/k/e.txt, base/k/f.uistate.json and
+   * base/cache.uistate.json/c.txt (+ g.uistate.json). The predicate ignores
+   * three files and the cache directory; that leaves 3 non-ignored files
+   * (a.txt, k/e.txt, cache.uistate.json/c.txt) and 1 non-ignored directory (k).
+   */
+  function makeIgnoreTree(): void {
+    fs.writeFileSync(path.join(base, "a.txt"), "a");
+    fs.writeFileSync(path.join(base, "b.uistate.json"), "b");
+    fs.mkdirSync(path.join(base, "k"));
+    fs.writeFileSync(path.join(base, "k", "e.txt"), "e");
+    fs.writeFileSync(path.join(base, "k", "f.uistate.json"), "f");
+    fs.mkdirSync(path.join(base, "cache.uistate.json"));
+    fs.writeFileSync(path.join(base, "cache.uistate.json", "c.txt"), "c");
+    fs.writeFileSync(path.join(base, "cache.uistate.json", "g.uistate.json"), "g");
+  }
+
+  it("O71: an ignored file created in a primed subfolder leaves the folder unchanged; a non-ignored one changes it", () => {
+    const sub = makeSubfolder();
+    const state = new ObservedState({ ignore });
+    state.prime([base]);
+    const ignored = path.join(sub, "x.uistate.json");
+    fs.writeFileSync(ignored, "ui");
+    expect(state.isChanged(sub)).to.be.false;
+    expect(state.isChanged(ignored)).to.be.false;
+
+    // Control: the same event with a name the predicate does not ignore.
+    fs.writeFileSync(path.join(sub, "y.txt"), "Y");
+    expect(state.isChanged(sub)).to.be.true;
+  });
+
+  it("O72: an ignored path is never stored and is not counted by prime", () => {
+    makeIgnoreTree();
+    const state = new ObservedState({ ignore, maxEntries: 4 });
+    // a.txt, k, k/e.txt, cache.uistate.json/c.txt: exactly the non-ignored entries.
+    expect(state.prime([base])).to.deep.equal({ files: 3, directories: 1, complete: true });
+
+    state.isChanged(path.join(base, "b.uistate.json"));
+    state.isChanged(path.join(base, "cache.uistate.json"));
+    state.record(path.join(base, "k", "f.uistate.json"));
+    state.record(path.join(base, "cache.uistate.json"));
+    state.isChanged(path.join(base, "cache.uistate.json", "g.uistate.json"));
+
+    expect(keysOf(state).filter(ignore)).to.deep.equal([]);
+    expect(state.size).to.equal(4);
+  });
+
+  it("O73: the fingerprinter is never called with an ignored path", () => {
+    makeIgnoreTree();
+    const seen: string[] = [];
+    const state = new ObservedState({
+      ignore,
+      fingerprint: (p) => {
+        seen.push(p);
+        return "x";
+      },
+    });
+    state.prime([base]);
+    state.record(path.join(base, "b.uistate.json"));
+    state.record(path.join(base, "cache.uistate.json"));
+    state.isChanged(path.join(base, "b.uistate.json"));
+    state.isChanged(path.join(base, "cache.uistate.json"));
+    state.isChanged(path.join(base, "k", "f.uistate.json"));
+    expect(seen.length).to.be.greaterThan(0);
+    expect(seen.map(toPosixPath).filter(ignore)).to.deep.equal([]);
+  });
+
+  it("O74: the predicate only ever receives normalized keys", () => {
+    makeIgnoreTree();
+    const received: string[] = [];
+    const state = new ObservedState({
+      ignore: (p) => {
+        received.push(p);
+        return ignore(p);
+      },
+    });
+    state.prime([base + path.sep]);
+    state.record(path.join(base, "k") + path.sep);
+    state.isChanged(path.join(base, "cache.uistate.json") + path.sep);
+    state.isChanged(path.join(base, "a.txt"));
+    expect(received.length).to.be.greaterThan(0);
+    expect(received.filter((p) => p.includes("\\") || p.endsWith("/"))).to.deep.equal([]);
+  });
+
+  it("O75: a throwing predicate counts as not ignored", () => {
+    makeSubfolder();
+    const state = new ObservedState({
+      ignore: () => {
+        throw new Error("boom");
+      },
+    });
+    let summary: ReturnType<ObservedState["prime"]> | undefined;
+    expect(() => {
+      summary = state.prime([base]);
+    }).to.not.throw();
+    expect(summary).to.deep.equal({ files: 1, directories: 1, complete: true });
+
+    const file = path.join(base, "S", "x.uistate.json");
+    fs.writeFileSync(file, "ui");
+    let first: boolean | undefined;
+    expect(() => {
+      first = state.isChanged(file);
+    }).to.not.throw();
+    expect(first).to.be.true; // never seen, reported like any other path
+    expect(state.isChanged(file)).to.be.false;
+
+    const other = path.join(base, "S", "y.uistate.json");
+    fs.writeFileSync(other, "ui");
+    expect(() => state.record(other)).to.not.throw();
+    expect(state.isChanged(other)).to.be.false;
+    expect(keysOf(state).map(toPosixPath)).to.include(toPosixPath(other));
+  });
+
+  describe("an ignored directory does not hide a change beneath it", () => {
+    const ignoreD = (p: string): boolean => p.endsWith("/D");
+
+    function layout(name: string): { dir: string; out: string; root: string } {
+      const root = path.join(base, name, "root");
+      const out = path.join(base, name, "out");
+      fs.mkdirSync(path.join(root, "D"), { recursive: true });
+      fs.mkdirSync(out);
+      fs.writeFileSync(path.join(root, "D", "x"), "A");
+      return { dir: path.join(root, "D"), out, root };
+    }
+
+    it("O76: an edit made while the directory is renamed out and back is reported, and so is its removal", () => {
+      const a = layout("round-trip");
+      const state = new ObservedState({ ignore: ignoreD });
+      state.prime([a.root]);
+      const moved = path.join(a.out, "D");
+      fs.renameSync(a.dir, moved);
+      fs.writeFileSync(path.join(moved, "x"), "B");
+      fs.renameSync(moved, a.dir);
+      expect(state.isChanged(a.dir)).to.be.true;
+      expect(state.isChanged(a.dir)).to.be.false;
+
+      const b = layout("removed");
+      const state2 = new ObservedState({ ignore: ignoreD });
+      state2.prime([b.root]);
+      fs.rmSync(b.dir, { recursive: true, force: true });
+      expect(state2.isChanged(b.dir)).to.be.true;
+    });
+  });
+});

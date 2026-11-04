@@ -136,6 +136,17 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * already under a root from an earlier `prime` call, which belongs to whoever
  * primed it and to that owner's queued events.
  *
+ * The optional `ignore` predicate (given the normalized key) excludes paths
+ * from the ledger: an ignored path never gets an entry, never reaches the
+ * fingerprinter and does not count toward `maxEntries` or `prime`'s summary.
+ * Judgement is per path and walks do not prune: the files and directories
+ * beneath an ignored directory are still walked and each is judged on its own,
+ * so a change to a non-ignored descendant is still reported. `isChanged` on an
+ * ignored file or missing path drops what is beneath it (changed only if a live
+ * entry was dropped); on an ignored directory it evaluates the non-ignored
+ * subtree without storing a marker; `record` does the same silently. A
+ * predicate that throws counts as not ignored.
+ *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
  * long-lived recursive watch can't grow it unboundedly. An evicted file
  * reports changed again on its next event — the same fail-open direction as
@@ -154,12 +165,39 @@ export class ObservedState {
   private children = new Map<string, Set<string>>();
   private readonly fingerprint: Fingerprinter;
   private readonly maxEntries: number;
+  private readonly ignore: ((filePath: string) => boolean) | undefined;
   private lossy = false; // set once an entry holding real content was lost; never clears
   private primedRoots: string[] = []; // normalized roots passed to prime()
 
-  constructor(opts?: { fingerprint?: Fingerprinter; maxEntries?: number }) {
+  /**
+   * @param opts.fingerprint Content fingerprinter; defaults to `contentFingerprint`.
+   * @param opts.maxEntries LRU bound on the ledger; defaults to 1000.
+   * @param opts.ignore Predicate over the normalized ledger key (POSIX separators,
+   *   no trailing slash). A path it returns true for is never stored, counted or
+   *   fingerprinted. Each path is judged on its own: walks still descend into an
+   *   ignored directory, so a descendant the predicate does not ignore is still
+   *   accounted for. A predicate that throws counts as "not ignored". Default:
+   *   ignore nothing.
+   */
+  constructor(opts?: { fingerprint?: Fingerprinter; maxEntries?: number; ignore?: (filePath: string) => boolean }) {
     this.fingerprint = opts?.fingerprint ?? contentFingerprint;
     this.maxEntries = opts?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.ignore = opts?.ignore;
+  }
+
+  /**
+   * True when the `ignore` predicate accepts the normalized key of `p`. A
+   * throwing predicate counts as not ignored: the fail-open direction (an extra
+   * change, never a missed one), and the guard keeps a caller callback from
+   * escaping.
+   */
+  private isIgnored(p: string): boolean {
+    if (!this.ignore) return false;
+    try {
+      return this.ignore(ObservedState.normalize(p)) === true;
+    } catch {
+      return false;
+    }
   }
 
   private static normalize(p: string): string {
@@ -288,6 +326,7 @@ export class ObservedState {
       const earlier = new Set(this.primedRoots);
       this.primedRoots.push(key);
       if (this.isFileRoot(root)) {
+        if (this.isIgnored(root)) continue;
         if (this.entries.has(key)) continue; // never overwrite
         try {
           this.touch(key, { kind: "file", fp: this.fingerprint(root) });
@@ -331,10 +370,16 @@ export class ObservedState {
         const { kind, id, stamp } = this.classify(full);
         const prev = this.entries.get(key);
         const link = kind === "dirlink";
+        const ignored = this.isIgnored(full);
         if (kind === "file") {
-          if (prev !== undefined) continue; // never overwrite; a conflicting dir marker is left to its event
+          if (ignored || prev !== undefined) continue; // never overwrite; a conflicting dir marker is left to its event
           this.touch(key, { kind: "file", fp: this.fingerprint(full) });
           summary.files++;
+          continue;
+        }
+        if (ignored) {
+          // No marker and no count; an ignored directory is still descended into.
+          if (kind === "dir" && !earlier.has(key)) this.walk(full, summary, earlier);
           continue;
         }
         if (prev !== undefined) {
@@ -376,6 +421,12 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     const { kind, id, stamp } = this.classify(filePath);
     const prev = this.entries.get(key);
+    if (this.isIgnored(filePath)) {
+      // An ignored path has no entry of its own; what lies beneath it is still accounted for.
+      if (kind === "file") this.dropBeneath(key);
+      else if (kind === "dir") this.recordChildren(key, filePath, false, true);
+      return;
+    }
     if (kind === "file") {
       // Same orphan rule as isChanged: a directory that became a file or went
       // missing takes its descendants with it (silently — this is "accounted for").
@@ -429,6 +480,8 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     const prev = this.entries.get(key);
     const { kind, id, stamp } = this.classify(filePath);
+
+    if (this.isIgnored(filePath)) return this.isChangedIgnored(key, filePath, kind);
 
     if (kind !== "file") {
       const link = kind === "dirlink";
@@ -494,6 +547,22 @@ export class ObservedState {
     return prev === undefined || prev.fp !== next || droppedLive;
   }
 
+  /**
+   * `isChanged` for a path the predicate ignores: it has no entry of its own
+   * and is never fingerprinted, so only what lies beneath it can differ. A file
+   * or missing path drops the entries beneath it (changed when a live one went);
+   * a link is unchanged; a directory has its non-ignored subtree evaluated and
+   * never gets a marker. A failed walk fails open.
+   */
+  private isChangedIgnored(key: string, filePath: string, kind: Kind): boolean {
+    if (kind === "file") return this.dropBeneath(key);
+    if (kind === "dirlink") return false;
+    const vouched = !this.lossy && this.isUnderPrimedRoot(filePath);
+    if (vouched) return this.recordChildren(key, filePath, true, true).changed;
+    const res = this.recordChildren(key, filePath, false, true);
+    return !res.ok || res.found > 0 || res.droppedLive;
+  }
+
   /** Remove a tracked path and every entry beneath it. */
   forget(filePath: string): void {
     const key = ObservedState.normalize(filePath);
@@ -520,12 +589,12 @@ export class ObservedState {
     dirPath: string,
     report: boolean,
     dropStale: boolean,
-  ): { ok: boolean; changed: boolean } {
+  ): { ok: boolean; changed: boolean; found: number; droppedLive: boolean } {
     let files: string[];
     try {
-      files = walkFiles(dirPath, () => true);
+      files = walkFiles(dirPath, (f) => !this.isIgnored(f));
     } catch {
-      return { ok: false, changed: true };
+      return { ok: false, changed: true, found: 0, droppedLive: false };
     }
     let changed = false;
     for (const f of files) {
@@ -533,11 +602,13 @@ export class ObservedState {
         if (this.isChanged(f)) changed = true;
       } else this.record(f);
     }
+    let droppedLive = false;
     if (dropStale) {
       const found = new Set(files.map((f) => ObservedState.normalize(f)));
-      if (this.dropUnfound(key, found) && report) changed = true;
+      droppedLive = this.dropUnfound(key, found);
+      if (droppedLive && report) changed = true;
     }
-    return { ok: true, changed };
+    return { ok: true, changed, found: files.length, droppedLive };
   }
 
   /**
