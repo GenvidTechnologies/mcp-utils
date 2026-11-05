@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { z } from "zod";
 import { paginatedContent, mcpContent } from "../src/mcpContent.js";
-import { mcpStructuredContent } from "../src/index.js";
+import { mcpStructuredContent, withMcpErrors } from "../src/index.js";
 
 describe("paginatedContent", () => {
   it("returns correct text block for first page with limit", () => {
@@ -141,6 +141,18 @@ describe("mcpStructuredContent", () => {
       message = (e as Error).message;
     }
     expect(message).to.equal("builder failed");
+  });
+
+  it("inside withMcpErrors, a builder that throws becomes an isError result with its message", async () => {
+    const handler = withMcpErrors(async () =>
+      mcpStructuredContent("a", "b", () => {
+        throw new Error("builder failed");
+      }),
+    );
+    const result: CallToolResult = await handler();
+    expect(result.isError).to.equal(true);
+    expect("structuredContent" in result).to.equal(false);
+    expect(JSON.stringify(result.content)).to.include("builder failed");
   });
 
   it("type-checks: result is a CallToolResult and structuredContent has the payload type", () => {
