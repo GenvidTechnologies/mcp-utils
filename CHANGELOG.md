@@ -11,6 +11,8 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-05
+
 ### Added
 
 - **`mcpStructuredContent` for tools with an `outputSchema`.**
