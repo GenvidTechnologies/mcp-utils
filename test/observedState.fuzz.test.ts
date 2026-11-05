@@ -16,7 +16,13 @@ import { ObservedState } from "../src/observedState.js";
 // rule). Events are the paths a recursive fs.watch reports: the touched path
 // and its parent, except for the "roundtrip" operation: a directory renamed
 // out, edited outside the tree and renamed back to its original path, which
-// delivers events on the directory itself only. The fuzz normally runs in
+// delivers events on the directory itself only. Two further runs give the state
+// an `ignore` predicate, one closed (it ignores everything beneath an ignored
+// directory) and one not (a descendant of an ignored directory can be live).
+// There the ground truth leaves out every file whose own key the predicate
+// accepts, and each batch also checks that no ledger key satisfies it. Those two
+// runs also generate "linkSwap": a directory renamed out and a link to an outside
+// directory put in its place (a link is not content and is never walked). The fuzz normally runs in
 // milliseconds, so the ctimes it sees are almost always inside the racy window:
 // it exercises the re-check path, not the trusted-stamp comparison, which the
 // separately aged tests pin.
@@ -36,7 +42,7 @@ function rng(seed: number): () => number {
   };
 }
 
-function snapshot(root: string): string {
+function snapshot(root: string, ignore?: (key: string) => boolean): string {
   const out: string[] = [];
   const walk = (d: string, rel: string): void => {
     const entries = fs.readdirSync(d, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : 1));
@@ -44,6 +50,8 @@ function snapshot(root: string): string {
       const full = path.join(d, e.name);
       const r = rel + "/" + e.name;
       if (e.isDirectory()) walk(full, r);
+      else if (e.isSymbolicLink()) continue; // a link is not content and is not walked
+      else if (ignore && ignore(full.split(path.sep).join("/"))) continue;
       else out.push(r + " " + createHash("sha1").update(fs.readFileSync(full)).digest("hex"));
     }
   };
@@ -60,7 +68,7 @@ function listTree(root: string): { files: string[]; dirs: string[] } {
       if (e.isDirectory()) {
         dirs.push(full);
         walk(full);
-      } else files.push(full);
+      } else if (!e.isSymbolicLink()) files.push(full); // a link is neither a file to edit nor a directory to enter
     }
   };
   walk(root);
@@ -104,12 +112,15 @@ interface RunResult {
   batches: number;
 }
 
-function run(seed: number, ops: number, batched: boolean): RunResult {
+function run(seed: number, ops: number, batched: boolean, ignore?: (key: string) => boolean): RunResult {
   const r = rng(seed * 7919 + 13);
   const pick = <T>(xs: T[]): T => xs[Math.floor(r() * xs.length)];
   const base = fs.realpathSync.native(os.tmpdir());
   const R = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-r-")));
   const O = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-o-")));
+  // Link targets for "linkSwap": never renamed or edited, so a link never dangles.
+  const T = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-t-")));
+  fs.writeFileSync(path.join(T, "t.txt"), "t");
   const NAMES = ["a", "b", "c"];
   const log: string[] = [];
   const result: RunResult = { missed: [], violations: [], batches: 0 };
@@ -126,7 +137,7 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
       fs.writeFileSync(path.join(d, pick(NAMES) + ".txt"), pick(["x", "y"]));
     }
     const maxEntries = pick([2, 3, 5, 8, 1000]);
-    const state = new ObservedState({ maxEntries });
+    const state = new ObservedState({ maxEntries, ignore });
     state.prime([R]);
 
     const inR = (p: string): boolean => p.startsWith(R + path.sep);
@@ -144,7 +155,11 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
     const step = (): string[] => {
       const { files, dirs } = listTree(R);
       const rdirs = [R, ...dirs];
-      const kind = pick(["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "roundtrip", "fileOut", "fileIn"]);
+      // "linkSwap" joins the pool only when a predicate is set, so the runs
+      // without one generate exactly the sequences they always did.
+      const kinds = ["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "roundtrip", "fileOut", "fileIn"];
+      if (ignore) kinds.push("linkSwap");
+      const kind = pick(kinds);
       switch (kind) {
         case "mkdir": {
           const p = path.join(pick(rdirs), pick(NAMES) + pick(NAMES));
@@ -241,6 +256,24 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
           log.push(`roundtrip ${rel(p)} (${what})`);
           return [p];
         }
+        case "linkSwap": {
+          // A directory renamed out and a link to an outside directory put in its
+          // place. The link is not content, so the files that were beneath it are gone.
+          if (!dirs.length) return [];
+          const p = pick(dirs);
+          const out = path.join(O, "l" + uniq++);
+          fs.renameSync(p, out);
+          try {
+            fs.symlinkSync(T, p, process.platform === "win32" ? "junction" : "dir");
+          } catch (err) {
+            fs.renameSync(out, p);
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === "EPERM" || code === "ENOSYS") return [];
+            throw err;
+          }
+          log.push(`linkSwap ${rel(p)}`);
+          return events(p);
+        }
         case "fileOut": {
           if (!files.length) return [];
           const p = pick(files);
@@ -262,17 +295,25 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
 
     for (let done = 0; done < ops; ) {
       const k = batched ? 1 + Math.floor(r() * 4) : 1;
-      const before = snapshot(R);
+      const before = snapshot(R, ignore);
       const pending: string[] = [];
       const start = log.length;
       for (let j = 0; j < k && done < ops; j++, done++) {
         for (const p of step()) if (!pending.includes(p)) pending.push(p);
       }
-      const after = snapshot(R);
+      const after = snapshot(R, ignore);
       const verdicts = pending.map((p) => state.isChanged(p));
       result.batches++;
       const v = indexViolation(state);
       if (v) result.violations.push(`seed ${seed}: ${v}`);
+      if (ignore) {
+        for (const k of (state as any).entries.keys() as Iterable<string>) {
+          if (ignore(k)) {
+            result.violations.push(`seed ${seed}: ledger holds ignored key ${k}`);
+            break;
+          }
+        }
+      }
       if (before !== after && !verdicts.some(Boolean)) {
         result.missed.push(
           `seed ${seed} (maxEntries ${maxEntries}): [${log.slice(start).join("; ")}] events [${pending.map(rel).join(", ")}]`,
@@ -282,6 +323,7 @@ function run(seed: number, ops: number, batched: boolean): RunResult {
   } finally {
     fs.rmSync(R, { recursive: true, force: true });
     fs.rmSync(O, { recursive: true, force: true });
+    fs.rmSync(T, { recursive: true, force: true });
   }
   return result;
 }
@@ -299,6 +341,32 @@ describe("ObservedState random operation sequences", function () {
       let batches = 0;
       for (let seed = 1; seed <= 40; seed++) {
         const res = run(seed, 60, batched);
+        missed.push(...res.missed);
+        violations.push(...res.violations);
+        batches += res.batches;
+      }
+      expect(batches).to.be.greaterThan(0);
+      expect(violations, violations.slice(0, 3).join("\n")).to.deep.equal([]);
+      expect(missed, missed.slice(0, 3).join("\n")).to.deep.equal([]);
+    });
+  }
+
+  const closed = (key: string): boolean => {
+    const segs = key.split("/");
+    return segs.includes("cc") || segs[segs.length - 1] === "c.txt";
+  };
+  const notClosed = (key: string): boolean => key.split("/").pop()!.startsWith("c");
+
+  for (const [id, label, ignore] of [
+    ["O77", "closed ignore predicate (a cc directory subtree, c.txt files)", closed],
+    ["O78", "non-closed ignore predicate (basename starts with c)", notClosed],
+  ] as const) {
+    it(`${id}: no missed change to non-ignored content, a consistent index and no ignored ledger key over 40 seeded sequences (${label}, batched)`, () => {
+      const missed: string[] = [];
+      const violations: string[] = [];
+      let batches = 0;
+      for (let seed = 1; seed <= 40; seed++) {
+        const res = run(seed, 60, true, ignore);
         missed.push(...res.missed);
         violations.push(...res.violations);
         batches += res.batches;

@@ -136,6 +136,22 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * already under a root from an earlier `prime` call, which belongs to whoever
  * primed it and to that owner's queued events.
  *
+ * The optional `ignore` predicate (given the normalized key) excludes paths
+ * from the ledger: an ignored path never gets an entry, never reaches the
+ * fingerprinter and does not count toward `maxEntries` or `prime`'s summary.
+ * Judgement is per path and walks do not prune: the files and directories
+ * beneath an ignored directory are still walked and each is judged on its own,
+ * so a change to a non-ignored descendant is still reported. `isChanged` on an
+ * ignored link, file or missing path drops what is beneath it and reports
+ * changed if a live entry was dropped or the ledger is lossy; on an ignored
+ * directory it
+ * evaluates the non-ignored subtree without storing a marker when the ledger
+ * vouches for it (under a `prime`d root, not lossy) and otherwise re-records
+ * it silently and reports changed. `record` on an ignored file, link or
+ * missing path drops what is beneath it, and on an ignored directory
+ * re-records the non-ignored subtree silently. A predicate that throws counts
+ * as not ignored.
+ *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
  * long-lived recursive watch can't grow it unboundedly. An evicted file
  * reports changed again on its next event — the same fail-open direction as
@@ -154,12 +170,39 @@ export class ObservedState {
   private children = new Map<string, Set<string>>();
   private readonly fingerprint: Fingerprinter;
   private readonly maxEntries: number;
+  private readonly ignore: ((filePath: string) => boolean) | undefined;
   private lossy = false; // set once an entry holding real content was lost; never clears
   private primedRoots: string[] = []; // normalized roots passed to prime()
 
-  constructor(opts?: { fingerprint?: Fingerprinter; maxEntries?: number }) {
+  /**
+   * @param opts.fingerprint Content fingerprinter; defaults to `contentFingerprint`.
+   * @param opts.maxEntries LRU bound on the ledger; defaults to 1000.
+   * @param opts.ignore Predicate over the normalized ledger key (POSIX separators,
+   *   no trailing slash). A path it returns true for is never stored, counted or
+   *   fingerprinted. Each path is judged on its own: walks still descend into an
+   *   ignored directory, so a descendant the predicate does not ignore is still
+   *   accounted for. Only a return value of `true` ignores; any other value
+   *   counts as "not ignored", as does a throw. Default: ignore nothing.
+   */
+  constructor(opts?: { fingerprint?: Fingerprinter; maxEntries?: number; ignore?: (filePath: string) => boolean }) {
     this.fingerprint = opts?.fingerprint ?? contentFingerprint;
     this.maxEntries = opts?.maxEntries ?? DEFAULT_MAX_ENTRIES;
+    this.ignore = opts?.ignore;
+  }
+
+  /**
+   * True when the `ignore` predicate accepts the normalized key of `p`. A
+   * throwing predicate counts as not ignored: the fail-open direction (an extra
+   * change, never a missed one), and the guard keeps a caller callback from
+   * escaping.
+   */
+  private isIgnored(p: string): boolean {
+    if (!this.ignore) return false;
+    try {
+      return this.ignore(ObservedState.normalize(p)) === true;
+    } catch {
+      return false;
+    }
   }
 
   private static normalize(p: string): string {
@@ -288,6 +331,7 @@ export class ObservedState {
       const earlier = new Set(this.primedRoots);
       this.primedRoots.push(key);
       if (this.isFileRoot(root)) {
+        if (this.isIgnored(root)) continue;
         if (this.entries.has(key)) continue; // never overwrite
         try {
           this.touch(key, { kind: "file", fp: this.fingerprint(root) });
@@ -331,10 +375,16 @@ export class ObservedState {
         const { kind, id, stamp } = this.classify(full);
         const prev = this.entries.get(key);
         const link = kind === "dirlink";
+        const ignored = this.isIgnored(full);
         if (kind === "file") {
-          if (prev !== undefined) continue; // never overwrite; a conflicting dir marker is left to its event
+          if (ignored || prev !== undefined) continue; // never overwrite; a conflicting dir marker is left to its event
           this.touch(key, { kind: "file", fp: this.fingerprint(full) });
           summary.files++;
+          continue;
+        }
+        if (ignored) {
+          // No marker and no count; an ignored directory is still descended into.
+          if (kind === "dir" && !earlier.has(key)) this.walk(full, summary, earlier);
           continue;
         }
         if (prev !== undefined) {
@@ -363,6 +413,8 @@ export class ObservedState {
 
   /**
    * Record `filePath` now, unconditionally — "this state is accounted for".
+   * An ignored path stores nothing: what lies beneath it is dropped (a link, a
+   * file or a missing path) or re-recorded silently (a directory).
    * A directory (or link to one) is stored as a marker; the fingerprinter is
    * only called for files. A directory already recorded with the same identity
    * and an unchanged (non-racy) ctime keeps its marker. If its ctime moved, its
@@ -376,6 +428,12 @@ export class ObservedState {
     const key = ObservedState.normalize(filePath);
     const { kind, id, stamp } = this.classify(filePath);
     const prev = this.entries.get(key);
+    if (this.isIgnored(filePath)) {
+      // An ignored path has no entry of its own; what lies beneath it is still accounted for.
+      if (kind === "file" || kind === "dirlink") this.dropBeneath(key);
+      else if (kind === "dir") this.recordChildren(key, filePath, false, true);
+      return;
+    }
     if (kind === "file") {
       // Same orphan rule as isChanged: a directory that became a file or went
       // missing takes its descendants with it (silently — this is "accounted for").
@@ -427,9 +485,11 @@ export class ObservedState {
    */
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
-    const prev = this.entries.get(key);
     const { kind, id, stamp } = this.classify(filePath);
 
+    if (this.isIgnored(filePath)) return this.isChangedIgnored(key, filePath, kind);
+
+    const prev = this.entries.get(key);
     if (kind !== "file") {
       const link = kind === "dirlink";
       if (prev?.kind === "dir" && id !== "" && prev.id === id && prev.link === link) {
@@ -494,6 +554,28 @@ export class ObservedState {
     return prev === undefined || prev.fp !== next || droppedLive;
   }
 
+  /**
+   * `isChanged` for a path the predicate ignores: it has no entry of its own
+   * and is never fingerprinted, so only what lies beneath it can differ. A
+   * link, a file or a missing path drops the entries beneath it, and reports
+   * changed when a live one went or the ledger is lossy: with no marker the
+   * ledger cannot tell that the path was a directory whose unrecorded children
+   * are now gone (fail open). A directory never gets a
+   * marker: under a `prime`d root on a non-lossy ledger its non-ignored subtree
+   * is evaluated, and otherwise it is re-recorded silently and reported changed
+   * (fail open).
+   */
+  private isChangedIgnored(key: string, filePath: string, kind: Kind): boolean {
+    if (kind !== "dir") return this.dropBeneath(key) || this.lossy;
+    const vouched = !this.lossy && this.isUnderPrimedRoot(filePath);
+    if (vouched) return this.recordChildren(key, filePath, true, true).changed;
+    // The ledger cannot vouch for this subtree (lossy, or outside a primed
+    // root), so a removed file whose entry is gone is undetectable: fail open,
+    // as the non-ignored directory path does.
+    this.recordChildren(key, filePath, false, true);
+    return true;
+  }
+
   /** Remove a tracked path and every entry beneath it. */
   forget(filePath: string): void {
     const key = ObservedState.normalize(filePath);
@@ -523,7 +605,7 @@ export class ObservedState {
   ): { ok: boolean; changed: boolean } {
     let files: string[];
     try {
-      files = walkFiles(dirPath, () => true);
+      files = walkFiles(dirPath, (f) => !this.isIgnored(f));
     } catch {
       return { ok: false, changed: true };
     }
