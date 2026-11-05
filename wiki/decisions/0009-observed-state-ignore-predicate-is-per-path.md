@@ -67,8 +67,12 @@ on `D`. Reporting "unchanged" for `D` would miss the edit. So:
 
 - `isChanged` on an ignored directory under a primed, non-lossy root evaluates
   its non-ignored subtree.
-- An ignored path that is now a file or is missing drops every entry beneath
-  it.
+- An ignored path that is now a link, a file, or missing drops every entry
+  beneath it, and `isChanged` reports changed if a live entry went, or while
+  the ledger is lossy. With no marker,
+  the ledger cannot know the path was a directory whose unrecorded children are
+  gone. `record` on an ignored file, link or missing path drops what is beneath
+  it; on an ignored directory it re-records the non-ignored subtree silently.
 - When the ledger cannot vouch for an ignored directory (it is lossy, or the
   directory is outside a primed root), `isChanged` re-records the children
   silently and reports changed. This is the module's fail-open direction.
@@ -119,8 +123,11 @@ and change default behaviour.
 
 - The default is unchanged. A consumer that passes no predicate sees no
   difference.
-- Every event on an ignored directory walks its subtree: `readdir` calls, no
-  hashing of ignored files.
+- Every event on an ignored directory walks its subtree: a `readdir` per
+  directory, plus a `stat` only for an entry that is not a plain file and that
+  the predicate does not ignore. Ignored entries are never stat'd or hashed
+  there. `prime`'s walk still `lstat`s every entry to classify it, but never
+  hashes an ignored one.
 - A never-seen directory under a primed root that holds only ignored files
   reads as unchanged.
 - The fuzz, `test/observedState.fuzz.test.ts`, covers the predicate: O77 uses a

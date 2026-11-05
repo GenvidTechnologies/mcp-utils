@@ -142,12 +142,15 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * Judgement is per path and walks do not prune: the files and directories
  * beneath an ignored directory are still walked and each is judged on its own,
  * so a change to a non-ignored descendant is still reported. `isChanged` on an
- * ignored file or missing path drops what is beneath it (changed only if a live
- * entry was dropped); on an ignored directory it evaluates the non-ignored
- * subtree without storing a marker when the ledger vouches for it (under a
- * `prime`d root, not lossy) and otherwise re-records it silently and reports
- * changed; `record` re-records it silently. A
- * predicate that throws counts as not ignored.
+ * ignored link, file or missing path drops what is beneath it and reports
+ * changed if a live entry was dropped or the ledger is lossy; on an ignored
+ * directory it
+ * evaluates the non-ignored subtree without storing a marker when the ledger
+ * vouches for it (under a `prime`d root, not lossy) and otherwise re-records
+ * it silently and reports changed. `record` on an ignored file, link or
+ * missing path drops what is beneath it, and on an ignored directory
+ * re-records the non-ignored subtree silently. A predicate that throws counts
+ * as not ignored.
  *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
  * long-lived recursive watch can't grow it unboundedly. An evicted file
@@ -178,8 +181,8 @@ export class ObservedState {
    *   no trailing slash). A path it returns true for is never stored, counted or
    *   fingerprinted. Each path is judged on its own: walks still descend into an
    *   ignored directory, so a descendant the predicate does not ignore is still
-   *   accounted for. A predicate that throws counts as "not ignored". Default:
-   *   ignore nothing.
+   *   accounted for. Only a return value of `true` ignores; any other value
+   *   counts as "not ignored", as does a throw. Default: ignore nothing.
    */
   constructor(opts?: { fingerprint?: Fingerprinter; maxEntries?: number; ignore?: (filePath: string) => boolean }) {
     this.fingerprint = opts?.fingerprint ?? contentFingerprint;
@@ -410,6 +413,8 @@ export class ObservedState {
 
   /**
    * Record `filePath` now, unconditionally — "this state is accounted for".
+   * An ignored path stores nothing: what lies beneath it is dropped (a link, a
+   * file or a missing path) or re-recorded silently (a directory).
    * A directory (or link to one) is stored as a marker; the fingerprinter is
    * only called for files. A directory already recorded with the same identity
    * and an unchanged (non-racy) ctime keeps its marker. If its ctime moved, its
@@ -425,7 +430,7 @@ export class ObservedState {
     const prev = this.entries.get(key);
     if (this.isIgnored(filePath)) {
       // An ignored path has no entry of its own; what lies beneath it is still accounted for.
-      if (kind === "file") this.dropBeneath(key);
+      if (kind === "file" || kind === "dirlink") this.dropBeneath(key);
       else if (kind === "dir") this.recordChildren(key, filePath, false, true);
       return;
     }
@@ -480,11 +485,11 @@ export class ObservedState {
    */
   isChanged(filePath: string): boolean {
     const key = ObservedState.normalize(filePath);
-    const prev = this.entries.get(key);
     const { kind, id, stamp } = this.classify(filePath);
 
     if (this.isIgnored(filePath)) return this.isChangedIgnored(key, filePath, kind);
 
+    const prev = this.entries.get(key);
     if (kind !== "file") {
       const link = kind === "dirlink";
       if (prev?.kind === "dir" && id !== "" && prev.id === id && prev.link === link) {
@@ -551,15 +556,17 @@ export class ObservedState {
 
   /**
    * `isChanged` for a path the predicate ignores: it has no entry of its own
-   * and is never fingerprinted, so only what lies beneath it can differ. A file
-   * or missing path drops the entries beneath it (changed when a live one went);
-   * a link is unchanged; a directory never gets a marker: under a `prime`d root
-   * on a non-lossy ledger its non-ignored subtree is evaluated, and otherwise it
-   * is re-recorded silently and reported changed (fail open).
+   * and is never fingerprinted, so only what lies beneath it can differ. A
+   * link, a file or a missing path drops the entries beneath it, and reports
+   * changed when a live one went or the ledger is lossy: with no marker the
+   * ledger cannot tell that the path was a directory whose unrecorded children
+   * are now gone (fail open). A directory never gets a
+   * marker: under a `prime`d root on a non-lossy ledger its non-ignored subtree
+   * is evaluated, and otherwise it is re-recorded silently and reported changed
+   * (fail open).
    */
   private isChangedIgnored(key: string, filePath: string, kind: Kind): boolean {
-    if (kind === "file") return this.dropBeneath(key);
-    if (kind === "dirlink") return false;
+    if (kind !== "dir") return this.dropBeneath(key) || this.lossy;
     const vouched = !this.lossy && this.isUnderPrimedRoot(filePath);
     if (vouched) return this.recordChildren(key, filePath, true, true).changed;
     // The ledger cannot vouch for this subtree (lossy, or outside a primed

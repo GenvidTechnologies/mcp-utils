@@ -1158,5 +1158,87 @@ describe("ObservedState ignore predicate", () => {
       fs.mkdirSync(a.dir);
       expect(state.isChanged(a.dir)).to.be.true;
     });
+
+    it("O80: a link that replaces an ignored directory is reported", function () {
+      const a = layout("link-swap");
+      const target = path.join(base, "link-swap", "target");
+      fs.mkdirSync(target);
+      const state = new ObservedState({ ignore: ignoreD });
+      state.prime([a.root]);
+      fs.renameSync(a.dir, path.join(a.out, "D"));
+      try {
+        fs.symlinkSync(target, a.dir, process.platform === "win32" ? "junction" : "dir");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") this.skip();
+        throw err;
+      }
+      expect(state.isChanged(a.dir)).to.be.true;
+      expect(state.isChanged(a.dir)).to.be.false;
+    });
+
+    it("O81: on a lossy ledger, a file that replaces an ignored directory is reported", () => {
+      const a = layout("lossy-file");
+      const state = new ObservedState({
+        ignore: ignoreD,
+        fingerprint: (p) => {
+          if (toPosixPath(p).endsWith("/D/x")) throw new Error("boom");
+          return "fp:" + p;
+        },
+      });
+      expect(state.prime([a.root]).complete).to.be.false;
+      fs.rmSync(a.dir, { recursive: true, force: true });
+      fs.writeFileSync(a.dir, "now a file");
+      expect(state.isChanged(a.dir)).to.be.true;
+    });
+
+    it("O82: record on an ignored path that is now a file drops what was beneath it and stores nothing", () => {
+      const a = layout("record-file");
+      const state = new ObservedState({ ignore: ignoreD });
+      state.prime([a.root]);
+      expect(keysOf(state).map(toPosixPath)).to.include(toPosixPath(path.join(a.dir, "x")));
+      fs.rmSync(a.dir, { recursive: true, force: true });
+      fs.writeFileSync(a.dir, "now a file");
+      state.record(a.dir);
+      expect(keysOf(state).map(toPosixPath).filter((k) => k.endsWith("/D") || k.includes("/D/"))).to.deep.equal([]);
+    });
+
+    it("O83: on a lossy ledger, a link that replaces an ignored directory whose file entry was evicted is reported", function () {
+      const a = layout("lossy-link");
+      const target = path.join(base, "lossy-link", "target");
+      fs.mkdirSync(target);
+      fs.writeFileSync(path.join(a.root, "p"), "P");
+      // Room for one entry: priming evicts a real fingerprint, so the ledger is lossy.
+      const state = new ObservedState({ ignore: ignoreD, maxEntries: 1 });
+      expect(state.prime([a.root]).complete).to.be.false;
+      fs.renameSync(a.dir, path.join(a.out, "D"));
+      try {
+        fs.symlinkSync(target, a.dir, process.platform === "win32" ? "junction" : "dir");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") this.skip();
+        throw err;
+      }
+      expect(state.isChanged(a.dir)).to.be.true;
+    });
+
+    it("O84: record on an ignored path that is now a link drops what was beneath it and stores nothing", function () {
+      const a = layout("record-link");
+      const target = path.join(base, "record-link", "target");
+      fs.mkdirSync(target);
+      const state = new ObservedState({ ignore: ignoreD });
+      state.prime([a.root]);
+      expect(keysOf(state).map(toPosixPath)).to.include(toPosixPath(path.join(a.dir, "x")));
+      fs.renameSync(a.dir, path.join(a.out, "D"));
+      try {
+        fs.symlinkSync(target, a.dir, process.platform === "win32" ? "junction" : "dir");
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === "EPERM" || code === "ENOSYS") this.skip();
+        throw err;
+      }
+      state.record(a.dir);
+      expect(keysOf(state).map(toPosixPath).filter((k) => k.endsWith("/D") || k.includes("/D/"))).to.deep.equal([]);
+    });
   });
 });

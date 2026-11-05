@@ -20,7 +20,9 @@ import { ObservedState } from "../src/observedState.js";
 // an `ignore` predicate, one closed (it ignores everything beneath an ignored
 // directory) and one not (a descendant of an ignored directory can be live).
 // There the ground truth leaves out every file whose own key the predicate
-// accepts, and each batch also checks that no ledger key satisfies it. The fuzz normally runs in
+// accepts, and each batch also checks that no ledger key satisfies it. Those two
+// runs also generate "linkSwap": a directory renamed out and a link to an outside
+// directory put in its place (a link is not content and is never walked). The fuzz normally runs in
 // milliseconds, so the ctimes it sees are almost always inside the racy window:
 // it exercises the re-check path, not the trusted-stamp comparison, which the
 // separately aged tests pin.
@@ -48,6 +50,7 @@ function snapshot(root: string, ignore?: (key: string) => boolean): string {
       const full = path.join(d, e.name);
       const r = rel + "/" + e.name;
       if (e.isDirectory()) walk(full, r);
+      else if (e.isSymbolicLink()) continue; // a link is not content and is not walked
       else if (ignore && ignore(full.split(path.sep).join("/"))) continue;
       else out.push(r + " " + createHash("sha1").update(fs.readFileSync(full)).digest("hex"));
     }
@@ -65,7 +68,7 @@ function listTree(root: string): { files: string[]; dirs: string[] } {
       if (e.isDirectory()) {
         dirs.push(full);
         walk(full);
-      } else files.push(full);
+      } else if (!e.isSymbolicLink()) files.push(full); // a link is neither a file to edit nor a directory to enter
     }
   };
   walk(root);
@@ -115,6 +118,9 @@ function run(seed: number, ops: number, batched: boolean, ignore?: (key: string)
   const base = fs.realpathSync.native(os.tmpdir());
   const R = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-r-")));
   const O = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-o-")));
+  // Link targets for "linkSwap": never renamed or edited, so a link never dangles.
+  const T = fs.realpathSync.native(fs.mkdtempSync(path.join(base, "obsfuzz-t-")));
+  fs.writeFileSync(path.join(T, "t.txt"), "t");
   const NAMES = ["a", "b", "c"];
   const log: string[] = [];
   const result: RunResult = { missed: [], violations: [], batches: 0 };
@@ -149,7 +155,11 @@ function run(seed: number, ops: number, batched: boolean, ignore?: (key: string)
     const step = (): string[] => {
       const { files, dirs } = listTree(R);
       const rdirs = [R, ...dirs];
-      const kind = pick(["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "roundtrip", "fileOut", "fileIn"]);
+      // "linkSwap" joins the pool only when a predicate is set, so the runs
+      // without one generate exactly the sequences they always did.
+      const kinds = ["mkdir", "write", "edit", "rmfile", "rmdir", "out", "in", "outedit", "swap", "roundtrip", "fileOut", "fileIn"];
+      if (ignore) kinds.push("linkSwap");
+      const kind = pick(kinds);
       switch (kind) {
         case "mkdir": {
           const p = path.join(pick(rdirs), pick(NAMES) + pick(NAMES));
@@ -246,6 +256,24 @@ function run(seed: number, ops: number, batched: boolean, ignore?: (key: string)
           log.push(`roundtrip ${rel(p)} (${what})`);
           return [p];
         }
+        case "linkSwap": {
+          // A directory renamed out and a link to an outside directory put in its
+          // place. The link is not content, so the files that were beneath it are gone.
+          if (!dirs.length) return [];
+          const p = pick(dirs);
+          const out = path.join(O, "l" + uniq++);
+          fs.renameSync(p, out);
+          try {
+            fs.symlinkSync(T, p, process.platform === "win32" ? "junction" : "dir");
+          } catch (err) {
+            fs.renameSync(out, p);
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === "EPERM" || code === "ENOSYS") return [];
+            throw err;
+          }
+          log.push(`linkSwap ${rel(p)}`);
+          return events(p);
+        }
         case "fileOut": {
           if (!files.length) return [];
           const p = pick(files);
@@ -295,6 +323,7 @@ function run(seed: number, ops: number, batched: boolean, ignore?: (key: string)
   } finally {
     fs.rmSync(R, { recursive: true, force: true });
     fs.rmSync(O, { recursive: true, force: true });
+    fs.rmSync(T, { recursive: true, force: true });
   }
   return result;
 }
