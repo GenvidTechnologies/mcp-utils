@@ -19,6 +19,7 @@ import {
   ReadWriteLock, ExpectedChanges, paginateText,
   walkFiles, resolveWithin, resolveRootFolder, escapeRegExp, toPosixPath,
   mcpError, withMcpErrors, bufferingLogger, paginatedContent, mcpContent,
+  mcpStructuredContent,
   READ_ONLY, REGENERATE, MUTATE, NON_IDEMPOTENT_READ,
   OptimisticWatcher, loadProjectConfig, isMcpError,
   ObservedState, contentFingerprint,
@@ -53,6 +54,7 @@ Each utility is independent — import only what you need. Grouped here the same
 
 - [`mcpError` / `withMcpErrors`](#mcperror--withmcperrors) — turn a thrown value into a `CallToolResult`
 - [`mcpContent`](#mcpcontent) — success-path counterpart to `mcpError`
+- [`mcpStructuredContent`](#mcpstructuredcontent) — `mcpContent` plus `structuredContent`, for tools with an `outputSchema`
 - [`paginatedContent`](#paginatedcontent) — paginated text as a `CallToolResult`
 - [`paginateText`](#paginatetext) — line-based pagination
 - [Tool annotation presets](#tool-annotation-presets) — `READ_ONLY`, `REGENERATE`, `MUTATE`, `NON_IDEMPOTENT_READ`
@@ -410,6 +412,27 @@ mcpContent("wrote 3 files");
 
 mcpContent("wrote 3 files", `txId: ${txId}`);
 // content[0].text === "wrote 3 files\ntxId: 7"
+```
+
+### mcpStructuredContent
+
+`mcpStructuredContent(text, footer, structured)` is `mcpContent` for a tool that declares an `outputSchema`. The MCP SDK (1.29.0) checks a success result from such a tool: if `structuredContent` is missing or does not match the schema, it replaces the result with an `isError` "Output validation error" result. This helper returns `content` and `structuredContent` together. `content` is exactly `mcpContent(text, footer).content`. No `isError` field is set. `isError` results are not validated, so `mcpError` results need no payload.
+
+`structured` is either a value or a builder `(body) => value`. The builder receives the text of the single content block once, so the payload can be derived from the text without building it twice. The builder is **not guarded**: if it throws, the error propagates. Inside `withMcpErrors` it becomes an `isError` result. Pass `undefined` as `footer` for none.
+
+`T` must be assignable to `Record<string, unknown>`. An object literal type or a type alias works. An `interface` without an index signature does not.
+
+```ts
+import { mcpStructuredContent } from "@genvidtech/mcp-utils";
+
+// Value form
+mcpStructuredContent("wrote 3 files", `txId: ${txId}`, { written: 3 });
+
+// Builder form: body is "clean\ntxId: 7"
+mcpStructuredContent("clean", `txId: ${txId}`, (body) => ({
+  clean: true,
+  report: body,
+}));
 ```
 
 ### Tool annotation presets

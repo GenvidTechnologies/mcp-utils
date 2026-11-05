@@ -11,6 +11,24 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **`mcpStructuredContent` for tools with an `outputSchema`.**
+  `mcpStructuredContent(text, footer, structured)` returns
+  `mcpContent(text, footer)`'s `content` plus a `structuredContent` payload.
+  `structured` is a value or a builder `(body) => value` that receives the
+  content block's text once. The MCP SDK rejects a success result from a tool
+  with an `outputSchema` when `structuredContent` is missing or does not match,
+  and replaces it with an `isError` "Output validation error" result.
+  `isError` results are not validated, so `mcpError` results need no payload.
+  The builder is not guarded: a throw propagates, and inside `withMcpErrors` it
+  becomes an `isError` result. No existing export changes.
+
+This ships as a **minor** release (0.14.0). Below 1.0.0 a caret range allows
+patch updates only, so a consumer pinned to `^0.13.0` does not receive it
+automatically and must widen its range to `^0.14.0` to adopt it. See
+[#37](https://github.com/GenvidTechnologies/mcp-utils/issues/37).
+
 ## [0.13.0] - 2026-11-04
 
 ### Added
