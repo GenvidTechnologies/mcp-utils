@@ -11,6 +11,24 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+### Added
+
+- **`ObservedState` accepts an `ignore` predicate.** The new constructor option
+  `ignore?: (filePath: string) => boolean` receives the normalized ledger key
+  (POSIX separators, trailing slashes stripped) and keeps matching paths out of
+  the ledger: an ignored path never gets an entry, is never fingerprinted and
+  does not count toward `maxEntries` or `prime`'s counts. Each path is judged on
+  its own and walks do not prune, so a non-ignored file beneath an ignored
+  directory is still tracked and its changes still reported. A predicate that
+  throws counts as not ignored (an extra bump, never a missed change). The
+  default ignores nothing, so existing behaviour is unchanged. With
+  `OptimisticWatcher`, pass `observed: new ObservedState({ ignore, maxEntries })`.
+
+The release carrying this ships as a **minor** release. Below 1.0.0 a caret
+range allows patch updates only, so a consumer pinned to `^0.12.0` does not
+receive it automatically and must widen its range to adopt it. See
+[#35](https://github.com/GenvidTechnologies/mcp-utils/issues/35).
+
 ## [0.12.0] - 2026-10-15
 
 ### Fixed

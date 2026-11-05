@@ -520,7 +520,7 @@ Call `start()` *before* you read the watched tree (to warm a cache, say): `start
 
 The `watcherFactory` option (type `WatcherFactory`) accepts an injectable factory that starts a watcher and returns a `WatchHandle`. The default wraps `fs.watch({ recursive: true })`; for a `watchDirs` entry that is a single regular file it watches the file non-recursively and reports every event at the file's own (normalized) path. A link to a file is watched at its target and reported at the link's path. Override it in tests to drive events programmatically without touching the filesystem.
 
-The `observed` option (type `ObservedState | null`) controls Layer 3: omit it and a default `ObservedState` is constructed for you (Layer 3 is **on by default**); pass an instance to reuse a shared or custom-fingerprinted ledger; pass `observed: null` to opt out of Layer 3 entirely. With `observed: null`, every event not suppressed by Layers 1 and 2 bumps `txId` — including every directory event and every first-read access-time event — and no start-up baseline is taken. With Layer 3 on, size the ledger's `maxEntries` (default 1000) to at least the watched trees' files plus directories; otherwise the baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls back to extra bumps rather than a missed change.
+The `observed` option (type `ObservedState | null`) controls Layer 3: omit it and a default `ObservedState` is constructed for you (Layer 3 is **on by default**); pass an instance to reuse a shared or custom-fingerprinted ledger; pass `observed: null` to opt out of Layer 3 entirely. With `observed: null`, every event not suppressed by Layers 1 and 2 bumps `txId` — including every directory event and every first-read access-time event — and no start-up baseline is taken. With Layer 3 on, size the ledger's `maxEntries` (default 1000) to at least the watched trees' files plus directories; otherwise the baseline is incomplete (logged by `OptimisticWatcher`) and the watcher falls back to extra bumps rather than a missed change. To keep some paths out of the ledger, build it with an `ignore` predicate (see **Ignored paths** under `ObservedState`).
 
 ### ObservedState
 
@@ -585,6 +585,28 @@ const observed = new ObservedState({
 ```
 
 There is no `stat`-based fingerprinter built in, and the snippet above is an illustration of the seam rather than a recommendation. A fingerprinter that returns equal values for genuinely different content makes the ledger suppress a real change — staleness, which is the one failure this primitive exists to prevent, and the reason hashing content is the default. See [ADR-0002](wiki/decisions/0002-observed-state-collapses-duplicate-watch-events.md) for the measured collision rate that ruled it out as a shipped default.
+
+**Ignored paths.** Pass an `ignore` predicate to keep some paths out of the ledger, for example editor-local files that should not count as a change:
+
+```ts
+import { ObservedState } from "@genvidtech/mcp-utils";
+
+// Constructor option: ignore?: (filePath: string) => boolean
+// The default ignores nothing, so behaviour is unchanged.
+const observed = new ObservedState({
+  ignore: (filePath) => filePath.endsWith(".uistate.json"),
+  maxEntries: 5000,
+});
+```
+
+- The predicate receives the normalized ledger key: POSIX separators, trailing slashes stripped. A walk and an event give it the same spelling. On Windows a predicate that compares against `path.resolve(root)` by string prefix sees backslashes in the root and forward slashes in the key, so it never matches. Use `path.relative`, or normalize the root first.
+- Each path is judged on its own, and walks do not prune. `prime` and the subtree re-checks still descend into an ignored directory and filter its files one at a time.
+- An ignored path never gets a ledger entry of its own, is never passed to the fingerprinter, and does not count toward `maxEntries` or toward `prime`'s `files` and `directories`.
+- Entries beneath an ignored path are still accounted for, so a predicate that ignores directory `D` but not `D/x` cannot hide a change to `D/x`. `isChanged` on an ignored file or missing path drops what is beneath it and reports changed only if a live entry was dropped; on an ignored link it reports unchanged. On an ignored directory under a `prime`d root on a non-lossy ledger, it evaluates the non-ignored subtree and stores no marker. Otherwise it re-records the subtree silently and reports changed. `record` on an ignored path records what is beneath it silently.
+- A predicate that throws counts as "not ignored". That fails open: an extra bump, never a missed change.
+- Cost: every event on an ignored directory walks its subtree (a `readdir`, plus an `lstat` for links; ignored files are not hashed). A large ignored tree pays that on each such event and on each re-check of an ancestor.
+
+`OptimisticWatcher` has no `ignore` option of its own. Pass the ledger instead: `observed: new ObservedState({ ignore, maxEntries })`. With `observed: null` the predicate does not apply. Rationale and rejected alternatives: [ADR-0009](wiki/decisions/0009-observed-state-ignore-predicate-is-per-path.md); the issue is [#35](https://github.com/GenvidTechnologies/mcp-utils/issues/35).
 
 ### TxToken
 
