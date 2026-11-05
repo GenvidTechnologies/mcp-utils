@@ -86,3 +86,35 @@ export function mcpContent(text: string, footer?: string): CallToolResult {
   const body = footer !== undefined ? (text === "" ? footer : `${text}\n${footer}`) : text;
   return { content: [{ type: "text", text: body }] };
 }
+
+/**
+ * Build a success {@link CallToolResult} that carries both the text block of
+ * {@link mcpContent} and a `structuredContent` payload.
+ *
+ * Use it for a tool that declares an `outputSchema`: the SDK rejects a
+ * success result that has no `structuredContent`. `content` is exactly what
+ * `mcpContent(text, footer)` returns, so the join rule has one home.
+ *
+ * `structured` is either the payload object, or a builder that receives the
+ * joined text block (`body`) and returns the payload. The builder is called
+ * once. It is not guarded: if it throws, the error propagates out of this
+ * function. Inside `withMcpErrors` the thrown error becomes an `isError`
+ * result.
+ *
+ * No `isError` field is set.
+ *
+ * @param text       The result text.
+ * @param footer     Optional trailing line, as in {@link mcpContent}.
+ * @param structured The payload, or a function from the joined text to it.
+ * @returns A `CallToolResult` whose `structuredContent` has the payload type.
+ */
+export function mcpStructuredContent<T extends Record<string, unknown>>(
+  text: string,
+  footer: string | undefined,
+  structured: T | ((body: string) => T),
+): CallToolResult & { structuredContent: T } {
+  const result = mcpContent(text, footer);
+  const body = (result.content[0] as { text: string }).text;
+  const payload = typeof structured === "function" ? structured(body) : structured;
+  return { content: result.content, structuredContent: payload };
+}
