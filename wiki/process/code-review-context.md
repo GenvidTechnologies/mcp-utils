@@ -58,6 +58,11 @@ try/catch in `src/mcpError.ts` for the established shape.
 - [ ] A new never-throw helper has no unguarded path out.
 - [ ] Any new caller-supplied callback is invoked inside a guard.
 - [ ] The tests cover the throwing-callback case, not just the happy path.
+- [ ] A doc claim about how a helper composes with another (for example,
+      "inside `withMcpErrors` it becomes an `isError` result") has a test of
+      that composition, not only of the helper alone. A deliberately
+      unguarded callback (`paginatedContent`'s footer,
+      `mcpStructuredContent`'s builder) is where such claims appear.
 
 ### Backward-compatible dual-form options
 
