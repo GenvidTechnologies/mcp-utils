@@ -144,7 +144,9 @@ export const contentFingerprint: Fingerprinter = (filePath) => {
  * so a change to a non-ignored descendant is still reported. `isChanged` on an
  * ignored file or missing path drops what is beneath it (changed only if a live
  * entry was dropped); on an ignored directory it evaluates the non-ignored
- * subtree without storing a marker; `record` does the same silently. A
+ * subtree without storing a marker when the ledger vouches for it (under a
+ * `prime`d root, not lossy) and otherwise re-records it silently and reports
+ * changed; `record` re-records it silently. A
  * predicate that throws counts as not ignored.
  *
  * The ledger is bounded by `maxEntries` with LRU eviction, so a
@@ -551,16 +553,20 @@ export class ObservedState {
    * `isChanged` for a path the predicate ignores: it has no entry of its own
    * and is never fingerprinted, so only what lies beneath it can differ. A file
    * or missing path drops the entries beneath it (changed when a live one went);
-   * a link is unchanged; a directory has its non-ignored subtree evaluated and
-   * never gets a marker. A failed walk fails open.
+   * a link is unchanged; a directory never gets a marker: under a `prime`d root
+   * on a non-lossy ledger its non-ignored subtree is evaluated, and otherwise it
+   * is re-recorded silently and reported changed (fail open).
    */
   private isChangedIgnored(key: string, filePath: string, kind: Kind): boolean {
     if (kind === "file") return this.dropBeneath(key);
     if (kind === "dirlink") return false;
     const vouched = !this.lossy && this.isUnderPrimedRoot(filePath);
     if (vouched) return this.recordChildren(key, filePath, true, true).changed;
-    const res = this.recordChildren(key, filePath, false, true);
-    return !res.ok || res.found > 0 || res.droppedLive;
+    // The ledger cannot vouch for this subtree (lossy, or outside a primed
+    // root), so a removed file whose entry is gone is undetectable: fail open,
+    // as the non-ignored directory path does.
+    this.recordChildren(key, filePath, false, true);
+    return true;
   }
 
   /** Remove a tracked path and every entry beneath it. */
@@ -589,12 +595,12 @@ export class ObservedState {
     dirPath: string,
     report: boolean,
     dropStale: boolean,
-  ): { ok: boolean; changed: boolean; found: number; droppedLive: boolean } {
+  ): { ok: boolean; changed: boolean } {
     let files: string[];
     try {
       files = walkFiles(dirPath, (f) => !this.isIgnored(f));
     } catch {
-      return { ok: false, changed: true, found: 0, droppedLive: false };
+      return { ok: false, changed: true };
     }
     let changed = false;
     for (const f of files) {
@@ -602,13 +608,11 @@ export class ObservedState {
         if (this.isChanged(f)) changed = true;
       } else this.record(f);
     }
-    let droppedLive = false;
     if (dropStale) {
       const found = new Set(files.map((f) => ObservedState.normalize(f)));
-      droppedLive = this.dropUnfound(key, found);
-      if (droppedLive && report) changed = true;
+      if (this.dropUnfound(key, found) && report) changed = true;
     }
-    return { ok: true, changed, found: files.length, droppedLive };
+    return { ok: true, changed };
   }
 
   /**

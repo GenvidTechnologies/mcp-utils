@@ -1147,5 +1147,16 @@ describe("ObservedState ignore predicate", () => {
       fs.rmSync(b.dir, { recursive: true, force: true });
       expect(state2.isChanged(b.dir)).to.be.true;
     });
+
+    it("O79: on a lossy ledger, emptying an ignored directory whose file entry was evicted is reported", () => {
+      const a = layout("lossy");
+      fs.writeFileSync(path.join(a.root, "p"), "P");
+      // Room for one entry: priming evicts a real fingerprint, so the ledger is lossy.
+      const state = new ObservedState({ ignore: ignoreD, maxEntries: 1 });
+      expect(state.prime([a.root]).complete).to.be.false;
+      fs.rmSync(a.dir, { recursive: true, force: true });
+      fs.mkdirSync(a.dir);
+      expect(state.isChanged(a.dir)).to.be.true;
+    });
   });
 });
