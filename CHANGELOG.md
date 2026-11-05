@@ -11,6 +11,8 @@ This file starts at 0.6.0. For earlier versions see the
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-04
+
 ### Added
 
 - **`ObservedState` accepts an `ignore` predicate.** The new constructor option
